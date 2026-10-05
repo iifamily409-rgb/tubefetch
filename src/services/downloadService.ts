@@ -3,14 +3,14 @@ import type { DownloadResponse, APIError } from '../types/video';
 /**
  * Download service - handles communication with the /api/download serverless function.
  * 
- * The download pipeline:
+ * The download pipeline with RapidAPI:
  * 1. Frontend sends { videoId, formatId, url } to /api/download
- * 2. /api/download calls cobalt API with the URL and quality settings
- * 3. Cobalt returns a tunnel URL or redirect URL to the actual media
- * 4. /api/download fetches the media and streams it to the browser
- * 5. Frontend receives the actual media bytes as a Blob
+ * 2. /api/backend creates download request with RapidAPI
+ * 3. Backend polls status until conversion is complete
+ * 4. Backend returns downloadUrl to frontend
+ * 5. Frontend triggers browser download using the downloadUrl
  * 
- * If cobalt is not configured, the API returns a clear error.
+ * If RapidAPI is not configured, the API returns a clear error.
  */
 
 export interface DownloadRequest {
@@ -25,6 +25,7 @@ export interface DownloadRequest {
 export interface DownloadResult {
   success: boolean;
   blob?: Blob;
+  downloadUrl?: string;
   fileName?: string;
   fileSize?: number;
   contentType?: string;
@@ -80,6 +81,7 @@ function parseContentDisposition(header: string | null): string | null {
 
 /**
  * Request a video download from the serverless API.
+ * Returns a download URL that the frontend can use to trigger the download.
  */
 export async function requestDownload(request: DownloadRequest): Promise<DownloadResult> {
   const { videoId, formatId, quality, format, url } = request;
@@ -107,7 +109,7 @@ export async function requestDownload(request: DownloadRequest): Promise<Downloa
       body: JSON.stringify({ videoId, formatId, quality, format, url }),
     });
 
-    // Step 1: Check HTTP status
+    // Check HTTP status
     if (!response.ok) {
       const contentType = response.headers.get('content-type') || '';
 
@@ -130,123 +132,45 @@ export async function requestDownload(request: DownloadRequest): Promise<Downloa
       };
     }
 
-    // Step 2: Check if response is a redirect (cobalt redirect mode)
-    if (response.redirected) {
-      // The API redirected to the media URL directly
-      // We need to fetch the media from the redirect target
-      const mediaResponse = await fetch(response.url);
-      
-      if (!mediaResponse.ok) {
-        return {
-          success: false,
-          error: {
-            code: 'REDIRECT_FAILED',
-            message: 'Failed to fetch media from redirect URL.',
-          },
-        };
-      }
-
-      const blob = await mediaResponse.blob();
-      
-      if (blob.size < MIN_VALID_MEDIA_SIZE) {
-        return {
-          success: false,
-          error: {
-            code: 'MEDIA_TOO_SMALL',
-            message: `Downloaded file is only ${blob.size} bytes. The link may have expired.`,
-          },
-        };
-      }
-
-      const mediaContentType = mediaResponse.headers.get('content-type') || '';
-      const contentDisposition = mediaResponse.headers.get('content-disposition');
-      const fileName = parseContentDisposition(contentDisposition) || `video_${videoId}.${format || 'mp4'}`;
-
-      return {
-        success: true,
-        blob,
-        fileName,
-        fileSize: blob.size,
-        contentType: mediaContentType,
-      };
-    }
-
-    // Step 3: Check Content-Type
+    // Parse JSON response
     const contentType = response.headers.get('content-type') || '';
-
-    // If the response is JSON, it's an error
-    if (contentType.includes('application/json')) {
-      const data = await response.json() as Record<string, unknown>;
-
-      if (data.error && typeof data.error === 'object') {
-        const apiError = data.error as APIError;
-        return {
-          success: false,
-          error: {
-            code: apiError.code || 'UNKNOWN_ERROR',
-            message: apiError.message || 'The server returned an error response.',
-          },
-        };
-      }
-
+    
+    if (!contentType.includes('application/json')) {
       return {
         success: false,
         error: {
           code: 'UNEXPECTED_RESPONSE',
-          message: 'The server returned an unexpected JSON response instead of media data.',
+          message: 'Server returned non-JSON response.',
         },
       };
     }
 
-    // Step 4: Verify it's actually media content
-    if (!isMediaContentType(contentType)) {
+    const data = await response.json() as any;
+
+    // Check for error response
+    if (!data.success) {
+      return {
+        success: false,
+        error: data.error || { code: 'UNKNOWN_ERROR', message: 'Unknown error occurred.' },
+      };
+    }
+
+    // Success - we have a download URL
+    if (!data.downloadUrl) {
       return {
         success: false,
         error: {
-          code: 'INVALID_CONTENT_TYPE',
-          message: `Server returned "${contentType}" which is not a valid media format.`,
+          code: 'NO_DOWNLOAD_URL',
+          message: 'Server did not return a download URL.',
         },
       };
     }
-
-    // Step 5: Get the response as a Blob
-    const blob = await response.blob();
-
-    // Step 6: Verify the blob has actual content
-    if (blob.size === 0) {
-      return {
-        success: false,
-        error: {
-          code: 'EMPTY_RESPONSE',
-          message: 'The server returned an empty response. The download link may have expired.',
-        },
-      };
-    }
-
-    if (blob.size < MIN_VALID_MEDIA_SIZE) {
-      return {
-        success: false,
-        error: {
-          code: 'MEDIA_TOO_SMALL',
-          message: `Downloaded file is only ${blob.size} bytes, too small to be valid media.`,
-        },
-      };
-    }
-
-    // Step 7: Extract filename
-    const contentDisposition = response.headers.get('content-disposition');
-    const fileName = parseContentDisposition(contentDisposition) || `video_${videoId}.${format || 'mp4'}`;
-
-    // Step 8: Get content length
-    const contentLength = response.headers.get('content-length');
-    const fileSize = contentLength ? parseInt(contentLength, 10) : blob.size;
 
     return {
       success: true,
-      blob,
-      fileName,
-      fileSize,
-      contentType,
+      downloadUrl: data.downloadUrl,
+      fileName: data.fileName || `video_${videoId}.${format || 'mp4'}`,
+      fileSize: data.fileSizeBytes || 0,
     };
 
   } catch (error) {
@@ -297,6 +221,24 @@ export function triggerBrowserDownload(blob: Blob, fileName: string): void {
   setTimeout(() => {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }, 100);
+}
+
+/**
+ * Trigger a browser file download from a URL.
+ */
+export function triggerBrowserDownloadFromUrl(downloadUrl: string, fileName: string): void {
+  const a = document.createElement('a');
+  a.href = downloadUrl;
+  a.download = fileName;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+
+  setTimeout(() => {
+    document.body.removeChild(a);
   }, 100);
 }
 

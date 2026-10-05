@@ -1,17 +1,15 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getProvider, isProviderConfigured } from './lib/providers';
-import { isSafeUrl } from './lib/security';
 
 /**
  * POST /api/analyze
  * 
- * Analyzes a YouTube URL using the configured provider (Piped or Invidious).
- * Falls back to YouTube oEmbed for basic metadata if no provider is configured.
+ * Analyzes a YouTube URL using RapidAPI YouTube downloader service.
+ * Returns video metadata including title, thumbnail, author, duration.
  * 
  * Environment Variables:
- * - VIDEO_PROVIDER_TYPE: 'piped' | 'invidious' (optional)
- * - VIDEO_PROVIDER_URL: URL of the provider instance (optional)
- * - VIDEO_PROVIDER_API_KEY: API key for the provider (optional)
+ * - VIDEO_PROVIDER_TYPE: 'rapidapi' (required)
+ * - RAPIDAPI_KEY: RapidAPI key (required)
+ * - RAPIDAPI_HOST: RapidAPI host (optional, defaults to youtube-mp4-mp3-downloader.p.rapidapi.com)
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Enable CORS
@@ -37,14 +35,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  // Validate URL format
-  if (!isSafeUrl(url)) {
-    return res.status(400).json({
-      success: false,
-      error: { code: 'INVALID_URL', message: 'Invalid or unsafe URL.' },
-    });
-  }
-
+  // Extract video ID from URL
   const videoId = extractVideoId(url);
   if (!videoId) {
     return res.status(400).json({
@@ -57,77 +48,100 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   console.log('[analyze] DIAGNOSTIC: Analyzing video', { videoId, isShort });
 
-  // Try to use configured provider first
-  const provider = getProvider();
-  
-  if (provider) {
-    console.log('[analyze] DIAGNOSTIC: Using provider:', provider.name);
+  // Check if RapidAPI is configured
+  const providerType = process.env.VIDEO_PROVIDER_TYPE;
+  const rapidApiKey = process.env.RAPIDAPI_KEY;
+  const rapidApiHost = process.env.RAPIDAPI_HOST || 'youtube-mp4-mp3-downloader.p.rapidapi.com';
+
+  if (providerType !== 'rapidapi' || !rapidApiKey) {
+    console.log('[analyze] DIAGNOSTIC: RapidAPI not configured');
     
+    // Fallback to YouTube oEmbed for basic metadata
     try {
-      const result = await provider.analyze(url);
+      const metadata = await fetchYouTubeMetadata(videoId);
       
-      if (result.success && result.video && result.formats) {
-        console.log('[analyze] DIAGNOSTIC: Provider analysis successful');
-        
-        return res.status(200).json({
-          success: true,
-          video: result.video,
-          formats: result.formats,
-          downloadAvailable: true,
-        });
-      }
-      
-      if (result.error) {
-        console.log('[analyze] DIAGNOSTIC: Provider error:', result.error);
-        
-        // Map provider errors to our error codes
-        return res.status(400).json({
+      if (!metadata) {
+        return res.status(404).json({
           success: false,
-          error: result.error,
+          error: { code: 'VIDEO_UNAVAILABLE', message: 'Video not found or unavailable.' },
         });
       }
+
+      return res.status(200).json({
+        success: true,
+        video: {
+          id: videoId,
+          title: metadata.title,
+          thumbnail: `https://img.youtube.com/vi/${videoId}/${isShort ? 'hq' : 'max'}default.jpg`,
+          channel: metadata.author_name,
+          duration: '—',
+          uploadDate: new Date().toISOString().split('T')[0],
+          isShort,
+        },
+        formats: getFormats(isShort),
+        downloadAvailable: false,
+      });
     } catch (error) {
-      console.error('[analyze] DIAGNOSTIC: Provider failed:', error);
-      // Fall through to oEmbed fallback
+      return res.status(500).json({
+        success: false,
+        error: { code: 'ANALYZE_FAILED', message: 'Failed to analyze video.' },
+      });
     }
   }
 
-  // Fallback to YouTube oEmbed (public API, no auth needed)
-  console.log('[analyze] DIAGNOSTIC: Falling back to YouTube oEmbed');
-  
+  // Use RapidAPI to fetch video info
   try {
-    const metadata = await fetchYouTubeMetadata(videoId);
+    console.log('[analyze] DIAGNOSTIC: Calling RapidAPI for video info');
 
-    if (!metadata) {
-      console.log('[analyze] DIAGNOSTIC: oEmbed returned no data for', videoId);
-      return res.status(404).json({
+    const response = await fetch(`https://${rapidApiHost}/api/v2/ytb?id=${videoId}`, {
+      method: 'GET',
+      headers: {
+        'x-rapidapi-key': rapidApiKey,
+        'x-rapidapi-host': rapidApiHost,
+      },
+    });
+
+    if (!response.ok) {
+      console.log('[analyze] DIAGNOSTIC: RapidAPI returned', response.status);
+      
+      if (response.status === 404) {
+        return res.status(404).json({
+          success: false,
+          error: { code: 'VIDEO_UNAVAILABLE', message: 'Video not found or unavailable.' },
+        });
+      }
+
+      return res.status(502).json({
         success: false,
-        error: { code: 'VIDEO_UNAVAILABLE', message: 'Video not found or unavailable.' },
+        error: { code: 'PROVIDER_ERROR', message: `RapidAPI returned HTTP ${response.status}` },
       });
     }
 
-    // Check if download provider is configured
-    const downloadAvailable = isProviderConfigured();
+    const data = await response.json() as any;
 
-    console.log('[analyze] DIAGNOSTIC: Download available:', downloadAvailable);
+    console.log('[analyze] DIAGNOSTIC: RapidAPI response received');
+
+    // Extract video metadata from RapidAPI response
+    const video = {
+      id: videoId,
+      title: data.title || 'Untitled',
+      thumbnail: data.thumbnail?.url || data.thumbnail || `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+      channel: data.author || data.channel || 'Unknown',
+      duration: formatDuration(data.duration || data.lengthSeconds || 0),
+      uploadDate: data.uploadDate || data.publishDate || new Date().toISOString().split('T')[0],
+      isShort,
+      viewCount: data.viewCount ? formatViewCount(data.viewCount) : undefined,
+    };
 
     return res.status(200).json({
       success: true,
-      video: {
-        id: videoId,
-        title: metadata.title,
-        thumbnail: `https://img.youtube.com/vi/${videoId}/${isShort ? 'hq' : 'max'}default.jpg`,
-        channel: metadata.author_name,
-        duration: '—',
-        uploadDate: new Date().toISOString().split('T')[0],
-        isShort,
-      },
+      video,
       formats: getFormats(isShort),
-      downloadAvailable,
+      downloadAvailable: true,
     });
+
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    console.log('[analyze] DIAGNOSTIC: Error:', message);
+    console.error('[analyze] DIAGNOSTIC: Error:', error);
     return res.status(500).json({
       success: false,
       error: { code: 'ANALYZE_FAILED', message: 'Failed to analyze video. Please try again.' },
@@ -167,7 +181,44 @@ function getFormats(isShort: boolean) {
 }
 
 function extractVideoId(url: string): string | null {
-  const regex = /^(https?:\/\/)?(www\.)?(youtube\.com\/(watch\?v=|shorts\/|embed\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
-  const match = url.trim().match(regex);
-  return match ? match[5] : null;
+  // Robust regex to extract video ID from various YouTube URL formats
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/embed\/|youtube\.com\/v\/|youtube\.com\/mobile\/watch\?v=)([a-zA-Z0-9_-]{11})/,
+    /^([a-zA-Z0-9_-]{11})$/, // Direct video ID
+  ];
+
+  for (const pattern of patterns) {
+    const match = url.trim().match(pattern);
+    if (match) {
+      return match[1];
+    }
+  }
+
+  return null;
+}
+
+function formatDuration(seconds: number): string {
+  if (!seconds || seconds === 0) return '—';
+  
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+
+  if (h > 0) {
+    return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  }
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function formatViewCount(views: number): string {
+  if (views >= 1_000_000_000) {
+    return `${(views / 1_000_000_000).toFixed(1)}B views`;
+  }
+  if (views >= 1_000_000) {
+    return `${(views / 1_000_000).toFixed(1)}M views`;
+  }
+  if (views >= 1_000) {
+    return `${(views / 1_000).toFixed(1)}K views`;
+  }
+  return `${views} views`;
 }

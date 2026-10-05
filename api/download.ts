@@ -1,23 +1,18 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getProvider } from './lib/providers';
-import { isSafeUrl, isUrlFromProvider } from './lib/security';
 
 /**
  * POST /api/download
  * 
- * Downloads media using the configured provider (Piped or Invidious).
+ * Downloads media using RapidAPI YouTube downloader service.
+ * Implements the complete workflow:
+ * 1. Create download request (POST /api/v2/request)
+ * 2. Poll status until FINISH (GET /api/v2/request/status)
+ * 3. Return download URL
  * 
  * Environment Variables:
- * - VIDEO_PROVIDER_TYPE: 'piped' | 'invidious' (required)
- * - VIDEO_PROVIDER_URL: URL of the provider instance (required)
- * - VIDEO_PROVIDER_API_KEY: API key for the provider (optional)
- * 
- * Request Body:
- * {
- *   videoId: string,
- *   formatId: string,  // "1080p" | "720p" | "480p" | "360p" | "audio-mp3"
- *   url: string        // original YouTube URL
- * }
+ * - VIDEO_PROVIDER_TYPE: 'rapidapi' (required)
+ * - RAPIDAPI_KEY: RapidAPI key (required)
+ * - RAPIDAPI_HOST: RapidAPI host (optional)
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Enable CORS
@@ -29,7 +24,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).end();
   }
 
-  // Only allow POST
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST, OPTIONS');
     return res.status(405).json({
@@ -70,138 +64,128 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  // Validate URL safety
-  if (!isSafeUrl(url)) {
-    return res.status(400).json({
-      success: false,
-      error: { code: 'INVALID_URL', message: 'The URL is invalid or unsafe.' },
-    });
-  }
-
   // Check provider configuration
-  const provider = getProvider();
+  const providerType = process.env.VIDEO_PROVIDER_TYPE;
+  const rapidApiKey = process.env.RAPIDAPI_KEY;
+  const rapidApiHost = process.env.RAPIDAPI_HOST || 'youtube-mp4-mp3-downloader.p.rapidapi.com';
 
-  if (!provider) {
-    console.log('[download] DIAGNOSTIC: Provider is not configured');
+  if (providerType !== 'rapidapi' || !rapidApiKey) {
+    console.log('[download] DIAGNOSTIC: RapidAPI not configured');
     return res.status(503).json({
       success: false,
       error: {
         code: 'PROVIDER_NOT_CONFIGURED',
-        message: 'Download provider is not configured. Set VIDEO_PROVIDER_TYPE and VIDEO_PROVIDER_URL environment variables. See README.md for setup instructions.',
+        message: 'Download provider is not configured. Set VIDEO_PROVIDER_TYPE=rapidapi and RAPIDAPI_KEY environment variables.',
       },
     });
   }
 
-  console.log('[download] DIAGNOSTIC: Request received', { videoId, formatId, provider: provider.name });
+  console.log('[download] DIAGNOSTIC: Request received', { videoId, formatId });
 
   try {
-    // Determine download mode based on formatId
-    const isAudio = formatId.startsWith('audio-');
-    const downloadMode = isAudio ? 'audio' : 'auto';
-    const quality = isAudio ? undefined : formatId;
-    const audioFormat = isAudio ? formatId.replace('audio-', '') : undefined;
+    // Step 1: Create download request
+    console.log('[download] DIAGNOSTIC: Creating download request');
 
-    // Call provider to get media URL
-    const downloadResult = await provider.prepareDownload(url, quality, audioFormat, downloadMode);
+    const requestResponse = await fetch(`https://${rapidApiHost}/api/v2/request`, {
+      method: 'POST',
+      headers: {
+        'x-rapidapi-key': rapidApiKey,
+        'x-rapidapi-host': rapidApiHost,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ id: videoId }),
+    });
 
-    if (!downloadResult.success || !downloadResult.mediaUrl) {
-      console.log('[download] DIAGNOSTIC: Provider failed to prepare download:', downloadResult.error);
-      
+    if (!requestResponse.ok) {
+      console.log('[download] DIAGNOSTIC: Request creation failed:', requestResponse.status);
       return res.status(502).json({
         success: false,
-        error: downloadResult.error || { code: 'DOWNLOAD_FAILED', message: 'Failed to prepare download' },
+        error: { code: 'REQUEST_FAILED', message: `Failed to create download request (HTTP ${requestResponse.status})` },
       });
     }
 
-    const mediaUrl = downloadResult.mediaUrl;
-    const fileName = downloadResult.fileName || generateFileName(videoId, formatId);
+    const requestData = await requestResponse.json() as any;
+    const uid = requestData.uid;
 
-    console.log('[download] DIAGNOSTIC: Media URL obtained');
-
-    // SSRF protection: Verify the media URL is safe
-    if (!isSafeUrl(mediaUrl)) {
-      console.log('[download] DIAGNOSTIC: Media URL failed safety check:', mediaUrl);
+    if (!uid) {
+      console.log('[download] DIAGNOSTIC: No UID in response');
       return res.status(502).json({
         success: false,
-        error: {
-          code: 'UNSAFE_MEDIA_URL',
-          message: 'The media URL from the provider is unsafe.',
+        error: { code: 'INVALID_RESPONSE', message: 'Download request did not return a valid UID.' },
+      });
+    }
+
+    console.log('[download] DIAGNOSTIC: Download request created, UID:', uid);
+
+    // Step 2: Poll status until FINISH (with timeout)
+    const maxAttempts = 30; // 30 attempts * 2 seconds = 60 seconds max
+    const pollInterval = 2000; // 2 seconds
+    let attempts = 0;
+    let downloadUrl: string | null = null;
+    let fileSize: number | null = null;
+
+    while (attempts < maxAttempts) {
+      attempts++;
+      console.log('[download] DIAGNOSTIC: Polling status, attempt', attempts);
+
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+
+      const statusResponse = await fetch(`https://${rapidApiHost}/api/v2/request/status?uid=${uid}`, {
+        method: 'GET',
+        headers: {
+          'x-rapidapi-key': rapidApiKey,
+          'x-rapidapi-host': rapidApiHost,
         },
       });
-    }
 
-    // Fetch the actual media
-    console.log('[download] DIAGNOSTIC: Fetching media from provider');
+      if (!statusResponse.ok) {
+        console.log('[download] DIAGNOSTIC: Status check failed:', statusResponse.status);
+        continue;
+      }
 
-    const mediaResponse = await provider.fetchMedia(mediaUrl);
+      const statusData = await statusResponse.json() as any;
+      const state = statusData.state;
 
-    console.log('[download] DIAGNOSTIC: Media fetch status:', mediaResponse.contentType);
-    console.log('[download] DIAGNOSTIC: Media Content-Length:', mediaResponse.contentLength);
+      console.log('[download] DIAGNOSTIC: Status:', state);
 
-    // Verify the response is actual media
-    if (!isMediaContentType(mediaResponse.contentType)) {
-      console.log('[download] DIAGNOSTIC: Non-media content type:', mediaResponse.contentType);
-      return res.status(502).json({
-        success: false,
-        error: {
-          code: 'INVALID_MEDIA_TYPE',
-          message: `Provider returned "${mediaResponse.contentType}" instead of media.`,
-        },
-      });
-    }
+      if (state === 'FINISH') {
+        downloadUrl = statusData.downloadUrl;
+        fileSize = statusData.fileSize;
+        break;
+      }
 
-    // Verify content length is reasonable
-    if (mediaResponse.contentLength) {
-      const size = parseInt(mediaResponse.contentLength, 10);
-      if (size < 1024) {
-        console.log('[download] DIAGNOSTIC: Media too small:', size, 'bytes');
+      if (state === 'ERROR' || state === 'FAILED') {
+        console.log('[download] DIAGNOSTIC: Conversion failed');
         return res.status(502).json({
           success: false,
-          error: {
-            code: 'MEDIA_TOO_SMALL',
-            message: `Media is only ${size} bytes. The download link may have expired.`,
-          },
+          error: { code: 'CONVERSION_FAILED', message: 'Video conversion failed. Please try again.' },
         });
       }
+
+      // Continue polling for IN_QUEUE, PROCESSING, etc.
     }
 
-    // Stream media to the client
-    res.setHeader('Content-Type', mediaResponse.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${sanitizeFilename(fileName)}"`);
-    if (mediaResponse.contentLength) {
-      res.setHeader('Content-Length', mediaResponse.contentLength);
-    }
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-
-    if (mediaResponse.body) {
-      const reader = mediaResponse.body.getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const canContinue = res.write(value);
-          if (!canContinue) {
-            await new Promise<void>(resolve => res.once('drain', () => resolve()));
-          }
-        }
-        res.end();
-        console.log('[download] DIAGNOSTIC: Media stream completed successfully');
-      } catch (streamError) {
-        console.log('[download] DIAGNOSTIC: Stream error:', (streamError as Error).message);
-        if (!res.headersSent) {
-          return res.status(500).json({
-            success: false,
-            error: { code: 'STREAM_ERROR', message: 'Error while streaming media to client.' },
-          });
-        }
-        res.end();
-      }
-    } else {
-      return res.status(502).json({
+    if (!downloadUrl) {
+      console.log('[download] DIAGNOSTIC: Timeout waiting for download');
+      return res.status(504).json({
         success: false,
-        error: { code: 'EMPTY_MEDIA_RESPONSE', message: 'Provider returned empty media response.' },
+        error: { code: 'TIMEOUT', message: 'Download preparation timed out. Please try again.' },
       });
     }
+
+    console.log('[download] DIAGNOSTIC: Download ready', { downloadUrl, fileSize });
+
+    // Step 3: Return download URL
+    const fileName = generateFileName(videoId, formatId);
+    const fileSizeMB = fileSize ? `${(fileSize / (1024 * 1024)).toFixed(1)} MB` : '—';
+
+    return res.status(200).json({
+      success: true,
+      downloadUrl,
+      fileName,
+      fileSize: fileSizeMB,
+      fileSizeBytes: fileSize,
+    });
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -212,23 +196,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return;
     }
 
-    if (errorMessage.includes('timeout') || errorMessage.includes('aborted')) {
-      return res.status(504).json({
-        success: false,
-        error: { code: 'PROVIDER_TIMEOUT', message: 'Provider API did not respond in time. Please try again.' },
-      });
-    }
-
-    if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND')) {
-      return res.status(502).json({
-        success: false,
-        error: {
-          code: 'PROVIDER_UNREACHABLE',
-          message: 'Cannot reach the provider instance. Check your VIDEO_PROVIDER_URL configuration.',
-        },
-      });
-    }
-
     return res.status(500).json({
       success: false,
       error: { code: 'DOWNLOAD_FAILED', message: 'An internal error occurred while processing the download.' },
@@ -236,35 +203,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-/**
- * Check if a content type represents actual media data
- */
-function isMediaContentType(contentType: string): boolean {
-  if (!contentType) return false;
-  const mediaTypes = [
-    'video/',
-    'audio/',
-    'application/octet-stream',
-    'application/mp4',
-    'audio/mp4',
-    'audio/mpeg',
-    'audio/x-m4a',
-  ];
-  return mediaTypes.some(type => contentType.toLowerCase().includes(type));
-}
-
-/**
- * Generate a safe filename for the download
- */
 function generateFileName(videoId: string, formatId: string): string {
-  const ext = formatId.startsWith('audio') ? (formatId === 'audio-mp3' ? 'mp3' : 'm4a') : 'mp4';
+  const ext = formatId.startsWith('audio') ? 'mp3' : 'mp4';
   return `youtube_${videoId}.${ext}`;
-}
-
-/**
- * Sanitize filename to prevent header injection
- */
-function sanitizeFilename(filename: string): string {
-  // Remove any characters that could cause issues in Content-Disposition header
-  return filename.replace(/[^a-zA-Z0-9_\-\. ]/g, '_').substring(0, 255);
 }

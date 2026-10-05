@@ -12,7 +12,7 @@ import { HowItWorks } from '../components/HowItWorks';
 import { FeatureCard } from '../components/FeatureCard';
 import { FAQ } from '../components/FAQ';
 import { analyzeVideo, prepareDownload } from '../services/videoService';
-import { requestDownload, triggerBrowserDownload } from '../services/downloadService';
+import { requestDownload, triggerBrowserDownloadFromUrl } from '../services/downloadService';
 import { isValidYouTubeUrl } from '../lib/validation';
 import { sleep } from '../lib/utils';
 import type { VideoMetadata, VideoFormat, DownloadState, AppStatus } from '../types/video';
@@ -72,8 +72,8 @@ export default function HomePage() {
     }
   }, []);
 
-  // Store the downloaded blob for the final download trigger
-  const downloadedBlobRef = useRef<Blob | null>(null);
+  // Store the download URL for the final download trigger
+  const downloadedUrlRef = useRef<string | null>(null);
   const downloadedFileNameRef = useRef<string>('');
 
   const handleFormatSelect = useCallback(async (format: VideoFormat) => {
@@ -81,7 +81,7 @@ export default function HomePage() {
     setStatus('downloading');
     setDownloadProgress(0);
     cancelRef.current = false;
-    downloadedBlobRef.current = null;
+    downloadedUrlRef.current = null;
     downloadedFileNameRef.current = '';
 
     setDownloadState({
@@ -148,12 +148,12 @@ export default function HomePage() {
         return;
       }
 
-      if (result.success && result.blob && result.fileName) {
+      if (result.success && result.downloadUrl && result.fileName) {
         // Complete the progress
         setDownloadProgress(100);
 
-        // Store the blob and filename for the final download trigger
-        downloadedBlobRef.current = result.blob;
+        // Store the download URL and filename for the final download trigger
+        downloadedUrlRef.current = result.downloadUrl;
         downloadedFileNameRef.current = result.fileName;
 
         // Update download state with actual file info
@@ -206,9 +206,9 @@ export default function HomePage() {
   }, []);
 
   const handleDownloadFile = useCallback(() => {
-    // Trigger the actual browser download with the real media blob
-    if (downloadedBlobRef.current && downloadedFileNameRef.current) {
-      triggerBrowserDownload(downloadedBlobRef.current, downloadedFileNameRef.current);
+    // Trigger the actual browser download with the download URL
+    if (downloadedUrlRef.current && downloadedFileNameRef.current) {
+      triggerBrowserDownloadFromUrl(downloadedUrlRef.current, downloadedFileNameRef.current);
     }
   }, []);
 
