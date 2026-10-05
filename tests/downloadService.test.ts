@@ -5,6 +5,8 @@ import { requestDownload, triggerBrowserDownload, checkDownloadAvailability } fr
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
+const TEST_URL = 'https://www.youtube.com/watch?v=abc123def45';
+
 beforeEach(() => {
   mockFetch.mockReset();
 });
@@ -12,13 +14,19 @@ beforeEach(() => {
 describe('requestDownload', () => {
   describe('input validation', () => {
     it('should reject missing videoId', async () => {
-      const result = await requestDownload({ videoId: '', formatId: 'v-720' });
+      const result = await requestDownload({ videoId: '', formatId: '720p', url: TEST_URL });
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('INVALID_REQUEST');
     });
 
     it('should reject missing formatId', async () => {
-      const result = await requestDownload({ videoId: 'abc123', formatId: '' });
+      const result = await requestDownload({ videoId: 'abc123def45', formatId: '', url: TEST_URL });
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('INVALID_REQUEST');
+    });
+
+    it('should reject missing URL', async () => {
+      const result = await requestDownload({ videoId: 'abc123def45', formatId: '720p', url: '' });
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('INVALID_REQUEST');
     });
@@ -31,6 +39,7 @@ describe('requestDownload', () => {
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
+        redirected: false,
         status: 200,
         headers: new Headers({
           'content-type': 'video/mp4',
@@ -40,11 +49,11 @@ describe('requestDownload', () => {
         blob: () => Promise.resolve(blob),
       });
 
-      const result = await requestDownload({ videoId: 'abc123def45', formatId: 'v-720', format: 'mp4' });
+      const result = await requestDownload({ videoId: 'abc123def45', formatId: '720p', format: 'mp4', url: TEST_URL });
 
       expect(result.success).toBe(true);
       expect(result.blob).toBeDefined();
-      expect(result.blob?.size).toBeGreaterThan(10 * 1024);
+      expect(result.blob!.size).toBeGreaterThan(10 * 1024);
       expect(result.fileName).toBe('test_video.mp4');
       expect(result.contentType).toBe('video/mp4');
     });
@@ -55,6 +64,7 @@ describe('requestDownload', () => {
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
+        redirected: false,
         status: 200,
         headers: new Headers({
           'content-type': 'video/mp4',
@@ -63,7 +73,7 @@ describe('requestDownload', () => {
         blob: () => Promise.resolve(blob),
       });
 
-      const result = await requestDownload({ videoId: 'abc123def45', formatId: 'v-720' });
+      const result = await requestDownload({ videoId: 'abc123def45', formatId: '720p', url: TEST_URL });
 
       expect(result.success).toBe(true);
       expect(result.fileName).toBe('My Video (720p).mp4');
@@ -76,6 +86,7 @@ describe('requestDownload', () => {
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
+        redirected: false,
         status: 200,
         headers: new Headers({
           'content-type': 'video/mp4',
@@ -84,7 +95,7 @@ describe('requestDownload', () => {
         blob: () => Promise.resolve(emptyBlob),
       });
 
-      const result = await requestDownload({ videoId: 'abc123def45', formatId: 'v-720' });
+      const result = await requestDownload({ videoId: 'abc123def45', formatId: '720p', url: TEST_URL });
 
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('EMPTY_RESPONSE');
@@ -95,6 +106,7 @@ describe('requestDownload', () => {
     it('should handle structured JSON error from API', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
+        redirected: false,
         status: 200,
         headers: new Headers({ 'content-type': 'application/json' }),
         json: () => Promise.resolve({
@@ -103,7 +115,7 @@ describe('requestDownload', () => {
         }),
       });
 
-      const result = await requestDownload({ videoId: 'abc123def45', formatId: 'v-720' });
+      const result = await requestDownload({ videoId: 'abc123def45', formatId: '720p', url: TEST_URL });
 
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('PROVIDER_NOT_CONFIGURED');
@@ -113,15 +125,16 @@ describe('requestDownload', () => {
     it('should handle JSON error with HTTP error status', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
+        redirected: false,
         status: 503,
         headers: new Headers({ 'content-type': 'application/json' }),
         json: () => Promise.resolve({
           success: false,
-          error: { code: 'PROVIDER_NOT_CONFIGURED', message: 'Set VIDEO_PROVIDER_URL.' },
+          error: { code: 'PROVIDER_NOT_CONFIGURED', message: 'Set COBALT_API_URL.' },
         }),
       });
 
-      const result = await requestDownload({ videoId: 'abc123def45', formatId: 'v-720' });
+      const result = await requestDownload({ videoId: 'abc123def45', formatId: '720p', url: TEST_URL });
 
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('PROVIDER_NOT_CONFIGURED');
@@ -132,6 +145,7 @@ describe('requestDownload', () => {
     it('should handle HTTP 400 error', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
+        redirected: false,
         status: 400,
         headers: new Headers({ 'content-type': 'application/json' }),
         json: () => Promise.resolve({
@@ -140,7 +154,7 @@ describe('requestDownload', () => {
         }),
       });
 
-      const result = await requestDownload({ videoId: 'abc123def45', formatId: 'v-720' });
+      const result = await requestDownload({ videoId: 'abc123def45', formatId: '720p', url: TEST_URL });
 
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('INVALID_REQUEST');
@@ -149,11 +163,12 @@ describe('requestDownload', () => {
     it('should handle HTTP 500 error without JSON body', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
+        redirected: false,
         status: 500,
         headers: new Headers({ 'content-type': 'text/html' }),
       });
 
-      const result = await requestDownload({ videoId: 'abc123def45', formatId: 'v-720' });
+      const result = await requestDownload({ videoId: 'abc123def45', formatId: '720p', url: TEST_URL });
 
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('HTTP_ERROR');
@@ -163,6 +178,7 @@ describe('requestDownload', () => {
     it('should handle HTTP 502 Bad Gateway', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
+        redirected: false,
         status: 502,
         headers: new Headers({ 'content-type': 'application/json' }),
         json: () => Promise.resolve({
@@ -171,7 +187,7 @@ describe('requestDownload', () => {
         }),
       });
 
-      const result = await requestDownload({ videoId: 'abc123def45', formatId: 'v-720' });
+      const result = await requestDownload({ videoId: 'abc123def45', formatId: '720p', url: TEST_URL });
 
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('PROVIDER_ERROR');
@@ -182,15 +198,16 @@ describe('requestDownload', () => {
     it('should handle format not found error from API', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
+        redirected: false,
         status: 400,
         headers: new Headers({ 'content-type': 'application/json' }),
         json: () => Promise.resolve({
           success: false,
-          error: { code: 'INVALID_FORMAT', message: 'The requested format is not available for this video.' },
+          error: { code: 'INVALID_FORMAT', message: 'The requested format is not available.' },
         }),
       });
 
-      const result = await requestDownload({ videoId: 'abc123def45', formatId: 'invalid-format' });
+      const result = await requestDownload({ videoId: 'abc123def45', formatId: 'invalid-format', url: TEST_URL });
 
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('INVALID_FORMAT');
@@ -201,22 +218,23 @@ describe('requestDownload', () => {
     it('should handle PROVIDER_NOT_CONFIGURED error', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
+        redirected: false,
         status: 503,
         headers: new Headers({ 'content-type': 'application/json' }),
         json: () => Promise.resolve({
           success: false,
           error: {
             code: 'PROVIDER_NOT_CONFIGURED',
-            message: 'The video download provider is not configured. Set the VIDEO_PROVIDER_URL environment variable.',
+            message: 'Download provider is not configured. Set COBALT_API_URL environment variable.',
           },
         }),
       });
 
-      const result = await requestDownload({ videoId: 'abc123def45', formatId: 'v-720' });
+      const result = await requestDownload({ videoId: 'abc123def45', formatId: '720p', url: TEST_URL });
 
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('PROVIDER_NOT_CONFIGURED');
-      expect(result.error?.message).toContain('VIDEO_PROVIDER_URL');
+      expect(result.error?.message).toContain('COBALT_API_URL');
     });
   });
 
@@ -224,12 +242,13 @@ describe('requestDownload', () => {
     it('should reject non-media content type', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
+        redirected: false,
         status: 200,
         headers: new Headers({ 'content-type': 'text/html' }),
         blob: () => Promise.resolve(new Blob(['<html>Error</html>'], { type: 'text/html' })),
       });
 
-      const result = await requestDownload({ videoId: 'abc123def45', formatId: 'v-720' });
+      const result = await requestDownload({ videoId: 'abc123def45', formatId: '720p', url: TEST_URL });
 
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('INVALID_CONTENT_TYPE');
@@ -240,6 +259,7 @@ describe('requestDownload', () => {
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
+        redirected: false,
         status: 200,
         headers: new Headers({
           'content-type': 'video/mp4',
@@ -248,7 +268,7 @@ describe('requestDownload', () => {
         blob: () => Promise.resolve(tinyBlob),
       });
 
-      const result = await requestDownload({ videoId: 'abc123def45', formatId: 'v-720' });
+      const result = await requestDownload({ videoId: 'abc123def45', formatId: '720p', url: TEST_URL });
 
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('MEDIA_TOO_SMALL');
@@ -262,12 +282,13 @@ describe('requestDownload', () => {
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
+        redirected: false,
         status: 200,
         headers: new Headers({ 'content-type': 'video/mp4' }),
         blob: () => Promise.resolve(blob),
       });
 
-      const result = await requestDownload({ videoId: 'abc123def45', formatId: 'v-720' });
+      const result = await requestDownload({ videoId: 'abc123def45', formatId: '720p', url: TEST_URL });
 
       expect(result.success).toBe(true);
       expect(result.contentType).toBe('video/mp4');
@@ -279,12 +300,13 @@ describe('requestDownload', () => {
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
+        redirected: false,
         status: 200,
         headers: new Headers({ 'content-type': 'audio/mpeg' }),
         blob: () => Promise.resolve(blob),
       });
 
-      const result = await requestDownload({ videoId: 'abc123def45', formatId: 'a-mp3' });
+      const result = await requestDownload({ videoId: 'abc123def45', formatId: 'audio-mp3', url: TEST_URL });
 
       expect(result.success).toBe(true);
       expect(result.contentType).toBe('audio/mpeg');
@@ -296,12 +318,13 @@ describe('requestDownload', () => {
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
+        redirected: false,
         status: 200,
         headers: new Headers({ 'content-type': 'application/octet-stream' }),
         blob: () => Promise.resolve(blob),
       });
 
-      const result = await requestDownload({ videoId: 'abc123def45', formatId: 'v-720' });
+      const result = await requestDownload({ videoId: 'abc123def45', formatId: '720p', url: TEST_URL });
 
       expect(result.success).toBe(true);
     });
@@ -311,7 +334,7 @@ describe('requestDownload', () => {
     it('should handle network failure', async () => {
       mockFetch.mockRejectedValueOnce(new Error('Failed to fetch'));
 
-      const result = await requestDownload({ videoId: 'abc123def45', formatId: 'v-720' });
+      const result = await requestDownload({ videoId: 'abc123def45', formatId: '720p', url: TEST_URL });
 
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('NETWORK_ERROR');
@@ -320,7 +343,7 @@ describe('requestDownload', () => {
     it('should handle timeout', async () => {
       mockFetch.mockRejectedValueOnce(new Error('Request timeout'));
 
-      const result = await requestDownload({ videoId: 'abc123def45', formatId: 'v-720' });
+      const result = await requestDownload({ videoId: 'abc123def45', formatId: '720p', url: TEST_URL });
 
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('TIMEOUT');
@@ -331,6 +354,7 @@ describe('requestDownload', () => {
     it('should detect JSON error even with HTTP 200', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
+        redirected: false,
         status: 200,
         headers: new Headers({ 'content-type': 'application/json; charset=utf-8' }),
         json: () => Promise.resolve({
@@ -339,7 +363,7 @@ describe('requestDownload', () => {
         }),
       });
 
-      const result = await requestDownload({ videoId: 'abc123def45', formatId: 'v-720' });
+      const result = await requestDownload({ videoId: 'abc123def45', formatId: '720p', url: TEST_URL });
 
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('MEDIA_TOO_SMALL');
@@ -349,12 +373,13 @@ describe('requestDownload', () => {
     it('should handle unexpected JSON response without error structure', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
+        redirected: false,
         status: 200,
         headers: new Headers({ 'content-type': 'application/json' }),
         json: () => Promise.resolve({ message: 'Something unexpected' }),
       });
 
-      const result = await requestDownload({ videoId: 'abc123def45', formatId: 'v-720' });
+      const result = await requestDownload({ videoId: 'abc123def45', formatId: '720p', url: TEST_URL });
 
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('UNEXPECTED_RESPONSE');
@@ -395,15 +420,20 @@ describe('checkDownloadAvailability', () => {
     expect(result.available).toBe(true);
   });
 
-  it('should return unavailable when API returns HTML', async () => {
+  it('should detect PROVIDER_NOT_CONFIGURED', async () => {
     mockFetch.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      headers: new Headers({ 'content-type': 'text/html' }),
+      ok: false,
+      status: 503,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: () => Promise.resolve({
+        success: false,
+        error: { code: 'PROVIDER_NOT_CONFIGURED', message: 'Set COBALT_API_URL.' },
+      }),
     });
 
     const result = await checkDownloadAvailability();
     expect(result.available).toBe(false);
+    expect(result.reason).toContain('COBALT_API_URL');
   });
 
   it('should return unavailable on network error', async () => {

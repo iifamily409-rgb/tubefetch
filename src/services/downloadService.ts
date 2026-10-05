@@ -3,13 +3,14 @@ import type { DownloadResponse, APIError } from '../types/video';
 /**
  * Download service - handles communication with the /api/download serverless function.
  * 
- * This service:
- * 1. Sends the download request to the serverless API
- * 2. Validates the HTTP response status
- * 3. Checks Content-Type to ensure it's actual media
- * 4. Detects JSON error responses
- * 5. Rejects suspiciously small responses
- * 6. Returns a proper Blob with the real media data
+ * The download pipeline:
+ * 1. Frontend sends { videoId, formatId, url } to /api/download
+ * 2. /api/download calls cobalt API with the URL and quality settings
+ * 3. Cobalt returns a tunnel URL or redirect URL to the actual media
+ * 4. /api/download fetches the media and streams it to the browser
+ * 5. Frontend receives the actual media bytes as a Blob
+ * 
+ * If cobalt is not configured, the API returns a clear error.
  */
 
 export interface DownloadRequest {
@@ -17,6 +18,8 @@ export interface DownloadRequest {
   formatId: string;
   quality?: string;
   format?: string;
+  /** Original YouTube URL - required by cobalt */
+  url: string;
 }
 
 export interface DownloadResult {
@@ -58,7 +61,6 @@ function isMediaContentType(contentType: string): boolean {
 function parseContentDisposition(header: string | null): string | null {
   if (!header) return null;
 
-  // Try filename*=UTF-8''... first (RFC 5987)
   const utf8Match = header.match(/filename\*\s*=\s*(?:UTF-8''|utf-8'')(.+?)(?:;|$)/i);
   if (utf8Match) {
     try {
@@ -68,7 +70,6 @@ function parseContentDisposition(header: string | null): string | null {
     }
   }
 
-  // Try filename="..." or filename=...
   const match = header.match(/filename\s*=\s*"?([^";]+)"?/i);
   if (match) {
     return match[1].trim();
@@ -79,19 +80,21 @@ function parseContentDisposition(header: string | null): string | null {
 
 /**
  * Request a video download from the serverless API.
- * 
- * Returns a DownloadResult with either:
- * - A valid Blob containing actual media data
- * - An error describing why the download failed
  */
 export async function requestDownload(request: DownloadRequest): Promise<DownloadResult> {
-  const { videoId, formatId, quality, format } = request;
+  const { videoId, formatId, quality, format, url } = request;
 
-  // Validate inputs
   if (!videoId || !formatId) {
     return {
       success: false,
       error: { code: 'INVALID_REQUEST', message: 'Missing videoId or formatId.' },
+    };
+  }
+
+  if (!url) {
+    return {
+      success: false,
+      error: { code: 'INVALID_REQUEST', message: 'Missing YouTube URL.' },
     };
   }
 
@@ -101,12 +104,11 @@ export async function requestDownload(request: DownloadRequest): Promise<Downloa
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ videoId, formatId, quality, format }),
+      body: JSON.stringify({ videoId, formatId, quality, format, url }),
     });
 
     // Step 1: Check HTTP status
     if (!response.ok) {
-      // Try to parse JSON error response
       const contentType = response.headers.get('content-type') || '';
 
       if (contentType.includes('application/json')) {
@@ -119,7 +121,6 @@ export async function requestDownload(request: DownloadRequest): Promise<Downloa
         }
       }
 
-      // Non-JSON error or missing error structure
       return {
         success: false,
         error: {
@@ -129,14 +130,54 @@ export async function requestDownload(request: DownloadRequest): Promise<Downloa
       };
     }
 
-    // Step 2: Check Content-Type
+    // Step 2: Check if response is a redirect (cobalt redirect mode)
+    if (response.redirected) {
+      // The API redirected to the media URL directly
+      // We need to fetch the media from the redirect target
+      const mediaResponse = await fetch(response.url);
+      
+      if (!mediaResponse.ok) {
+        return {
+          success: false,
+          error: {
+            code: 'REDIRECT_FAILED',
+            message: 'Failed to fetch media from redirect URL.',
+          },
+        };
+      }
+
+      const blob = await mediaResponse.blob();
+      
+      if (blob.size < MIN_VALID_MEDIA_SIZE) {
+        return {
+          success: false,
+          error: {
+            code: 'MEDIA_TOO_SMALL',
+            message: `Downloaded file is only ${blob.size} bytes. The link may have expired.`,
+          },
+        };
+      }
+
+      const mediaContentType = mediaResponse.headers.get('content-type') || '';
+      const contentDisposition = mediaResponse.headers.get('content-disposition');
+      const fileName = parseContentDisposition(contentDisposition) || `video_${videoId}.${format || 'mp4'}`;
+
+      return {
+        success: true,
+        blob,
+        fileName,
+        fileSize: blob.size,
+        contentType: mediaContentType,
+      };
+    }
+
+    // Step 3: Check Content-Type
     const contentType = response.headers.get('content-type') || '';
 
-    // If the response is JSON, it's an error (successful downloads return media)
+    // If the response is JSON, it's an error
     if (contentType.includes('application/json')) {
       const data = await response.json() as Record<string, unknown>;
 
-      // Check if it's a structured error
       if (data.error && typeof data.error === 'object') {
         const apiError = data.error as APIError;
         return {
@@ -148,7 +189,6 @@ export async function requestDownload(request: DownloadRequest): Promise<Downloa
         };
       }
 
-      // Unexpected JSON response
       return {
         success: false,
         error: {
@@ -158,21 +198,21 @@ export async function requestDownload(request: DownloadRequest): Promise<Downloa
       };
     }
 
-    // Step 3: Verify it's actually media content
+    // Step 4: Verify it's actually media content
     if (!isMediaContentType(contentType)) {
       return {
         success: false,
         error: {
           code: 'INVALID_CONTENT_TYPE',
-          message: `The server returned content type "${contentType}" which is not a valid media format.`,
+          message: `Server returned "${contentType}" which is not a valid media format.`,
         },
       };
     }
 
-    // Step 4: Get the response as a Blob
+    // Step 5: Get the response as a Blob
     const blob = await response.blob();
 
-    // Step 5: Verify the blob has actual content
+    // Step 6: Verify the blob has actual content
     if (blob.size === 0) {
       return {
         success: false,
@@ -188,16 +228,16 @@ export async function requestDownload(request: DownloadRequest): Promise<Downloa
         success: false,
         error: {
           code: 'MEDIA_TOO_SMALL',
-          message: `The downloaded file is only ${blob.size} bytes, which is too small to be a valid media file. The download link may have expired.`,
+          message: `Downloaded file is only ${blob.size} bytes, too small to be valid media.`,
         },
       };
     }
 
-    // Step 6: Extract filename from Content-Disposition
+    // Step 7: Extract filename
     const contentDisposition = response.headers.get('content-disposition');
     const fileName = parseContentDisposition(contentDisposition) || `video_${videoId}.${format || 'mp4'}`;
 
-    // Step 7: Get content length
+    // Step 8: Get content length
     const contentLength = response.headers.get('content-length');
     const fileSize = contentLength ? parseInt(contentLength, 10) : blob.size;
 
@@ -227,7 +267,7 @@ export async function requestDownload(request: DownloadRequest): Promise<Downloa
         success: false,
         error: {
           code: 'TIMEOUT',
-          message: 'The download request timed out. The file may be too large or the server is busy.',
+          message: 'The download request timed out.',
         },
       };
     }
@@ -244,7 +284,6 @@ export async function requestDownload(request: DownloadRequest): Promise<Downloa
 
 /**
  * Trigger a browser file download from a Blob.
- * Creates an object URL, triggers the download, and revokes the URL.
  */
 export function triggerBrowserDownload(blob: Blob, fileName: string): void {
   const url = URL.createObjectURL(blob);
@@ -255,7 +294,6 @@ export function triggerBrowserDownload(blob: Blob, fileName: string): void {
   document.body.appendChild(a);
   a.click();
 
-  // Clean up
   setTimeout(() => {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
@@ -263,31 +301,33 @@ export function triggerBrowserDownload(blob: Blob, fileName: string): void {
 }
 
 /**
- * Check if the download API is available (serverless function is deployed).
- * This is a lightweight check that doesn't consume resources.
+ * Check if the download API is available.
  */
 export async function checkDownloadAvailability(): Promise<{ available: boolean; reason?: string }> {
   try {
-    // We can't easily check without making a real request, so we just
-    // verify the endpoint exists by making a request with invalid data
-    // and checking we get a structured error (not a 404 or HTML page)
     const response = await fetch('/api/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoId: '__check__', formatId: '__check__' }),
+      body: JSON.stringify({ videoId: '__check__', formatId: '__check__', url: 'https://youtube.com/watch?v=__check__' }),
     });
 
     const contentType = response.headers.get('content-type') || '';
 
-    // If we get a JSON response (even an error), the API is deployed
     if (contentType.includes('application/json')) {
+      const data = await response.json() as any;
+      // If we get PROVIDER_NOT_CONFIGURED, the API is deployed but cobalt isn't set up
+      if (data.error?.code === 'PROVIDER_NOT_CONFIGURED') {
+        return {
+          available: false,
+          reason: 'Download provider (cobalt) is not configured. Set COBALT_API_URL environment variable.',
+        };
+      }
       return { available: true };
     }
 
-    // If we get HTML or something else, the API might not be deployed
     return {
       available: false,
-      reason: 'The download API endpoint is not responding correctly. It may not be deployed.',
+      reason: 'The download API endpoint is not responding correctly.',
     };
   } catch {
     return {

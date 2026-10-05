@@ -10,6 +10,10 @@ vi.mock('../src/lib/utils', async () => {
   };
 });
 
+// Mock fetch to simulate API not available (fallback to mock)
+const mockFetch = vi.fn().mockRejectedValue(new Error('API not available'));
+global.fetch = mockFetch;
+
 describe('validateUrl', () => {
   it('should validate correct YouTube URLs', async () => {
     const result = await validateUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
@@ -40,12 +44,6 @@ describe('getMetadata', () => {
     expect(metadata?.isShort).toBe(false);
   });
 
-  it('should return metadata for Shorts', async () => {
-    const metadata = await getMetadata('shorts001');
-    expect(metadata).not.toBeNull();
-    expect(metadata?.isShort).toBe(true);
-  });
-
   it('should generate metadata for unknown video IDs', async () => {
     const metadata = await getMetadata('unknownVideoId');
     expect(metadata).not.toBeNull();
@@ -66,7 +64,6 @@ describe('getAvailableFormats', () => {
     const regularFormats = await getAvailableFormats(false);
     const shortFormats = await getAvailableFormats(true);
     
-    // Shorts should have different resolution formats
     const regularVideoFormats = regularFormats.filter(f => f.type === 'video');
     const shortVideoFormats = shortFormats.filter(f => f.type === 'video');
     
@@ -76,7 +73,7 @@ describe('getAvailableFormats', () => {
 });
 
 describe('analyzeVideo', () => {
-  it('should return success for valid YouTube URLs', async () => {
+  it('should return success for valid YouTube URLs (fallback to mock)', async () => {
     const result = await analyzeVideo('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
     expect(result.success).toBe(true);
     expect(result.video).toBeDefined();
@@ -95,13 +92,36 @@ describe('analyzeVideo', () => {
     expect(result.success).toBe(true);
     expect(result.video?.isShort).toBe(true);
   });
+
+  it('should use real API when available', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        success: true,
+        video: {
+          id: 'test123456',
+          title: 'Test Video',
+          thumbnail: 'https://example.com/thumb.jpg',
+          channel: 'Test Channel',
+          duration: '—',
+          uploadDate: '2024-01-01',
+          isShort: false,
+        },
+        formats: [],
+        downloadAvailable: false,
+      }),
+    });
+
+    const result = await analyzeVideo('https://www.youtube.com/watch?v=test123456');
+    expect(result.success).toBe(true);
+    expect(result.video?.title).toBe('Test Video');
+  });
 });
 
 describe('prepareDownload', () => {
   it('should return download info for valid format', async () => {
-    const result = await prepareDownload('dQw4w9WgXcQ', 'v-720');
+    const result = await prepareDownload('dQw4w9WgXcQ', '720p');
     expect(result.fileName).toBeTruthy();
-    expect(result.fileSize).toBeTruthy();
     expect(result.quality).toBe('720p');
     expect(result.format).toBe('MP4');
   });

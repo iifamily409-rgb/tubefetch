@@ -121,19 +121,38 @@ VIDEO_PROVIDER_API_KEY=
 
 ### Download Provider Configuration
 
-The download pipeline requires a video provider API to be configured. The provider must:
+TubeFetch uses **[cobalt](https://github.com/imputnet/cobalt)** (44.7k ⭐ on GitHub) as the download provider. Cobalt is an open-source media processing API that supports YouTube, YouTube Shorts, TikTok, Twitter, and more.
 
-1. Accept `POST` requests with `{ videoId, formatId, quality?, format? }`
-2. Return either:
-   - A direct media stream with proper `Content-Type` (video/mp4, audio/mpeg, etc.)
-   - A JSON response containing a `url` field pointing to the downloadable media
+**Important:** The official `api.cobalt.tools` instance has bot protection and is NOT for programmatic use. You must either self-host an instance or get access to a community instance.
 
-Compatible providers include:
-- RapidAPI YouTube download APIs
-- Self-hosted yt-dlp API servers (e.g., `yt-dlp-web` or custom wrappers)
-- Any custom API that returns downloadable media
+#### Option A: Self-host a cobalt instance (Recommended)
 
-**Without a configured provider, the UI will display a clear error explaining what's needed.**
+1. Deploy cobalt on Railway, Render, Fly.io, or any Docker host:
+   ```bash
+   # Using Docker
+   docker pull ghcr.io/imputnet/cobalt:10
+   docker run -p 9000:9000 ghcr.io/imputnet/cobalt:10
+   ```
+   Full guide: https://github.com/imputnet/cobalt/blob/main/docs/run-an-instance.md
+
+2. Set environment variables in Vercel:
+   ```
+   COBALT_API_URL=https://your-cobalt-instance.example.com
+   COBALT_API_KEY=your-api-key  # Only if your instance requires auth
+   ```
+
+#### Option B: Use a community cobalt instance
+
+1. Find instances at: https://instances.cobalt.best/
+2. Contact the instance owner for API access
+3. Set the environment variables in Vercel
+
+#### Without a configured provider
+
+The app will:
+- ✅ Still analyze videos (using YouTube's public oEmbed API - no config needed)
+- ❌ Show a clear error when download is attempted
+- 📋 Display exact setup instructions in the error message
 
 ## Development
 
@@ -206,19 +225,26 @@ This project is licensed under the MIT License - see the [LICENSE](./LICENSE) fi
 
 ## Architecture
 
-### Download Pipeline
+### Pipeline
 
 ```
-Browser (React SPA)
+Browser (React SPA on Vercel)
+    ↓ POST /api/analyze
+/api/analyze.ts
+    ↓ YouTube oEmbed API (public, no auth)
+Returns: video metadata + available formats
+
+    ↓ User selects quality, clicks download
     ↓ POST /api/download
-Vercel Serverless Function (api/download.ts)
-    ↓ POST to VIDEO_PROVIDER_URL
-Video Provider API (external)
-    ↓ Returns media URL or direct stream
-Vercel Serverless Function
-    ↓ Streams media to browser
-Browser receives actual media blob
-    ↓ Creates Object URL
+/api/download.ts
+    ↓ POST to COBALT_API_URL (cobalt instance)
+Cobalt API
+    ↓ Returns tunnel URL or redirect URL
+/api/download.ts
+    ↓ Fetches actual media from tunnel/redirect
+    ↓ Streams media to browser with proper headers
+Browser receives actual media bytes
+    ↓ Creates Object URL from Blob
 File saved to disk
 ```
 

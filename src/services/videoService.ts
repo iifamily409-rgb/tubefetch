@@ -2,7 +2,23 @@ import type { VideoMetadata, VideoFormat, AnalyzeResponse } from '../types/video
 import { extractVideoId, isYouTubeShort, getThumbnailUrl } from '../lib/validation';
 import { sleep } from '../lib/utils';
 
-// Mock video database for demo purposes
+/**
+ * Video Service
+ * 
+ * Handles video analysis and download preparation.
+ * 
+ * Analysis flow:
+ * 1. Try calling /api/analyze (uses YouTube oEmbed for real metadata)
+ * 2. If API is not available, fall back to local mock data
+ * 
+ * Download flow:
+ * 1. prepareDownload() returns display info
+ * 2. The actual download is handled by downloadService.ts calling /api/download
+ * 
+ * The /api/download endpoint uses cobalt API (requires COBALT_API_URL env var).
+ */
+
+// Mock video database for fallback when API is not available
 const MOCK_VIDEOS: Record<string, VideoMetadata> = {
   'dQw4w9WgXcQ': {
     id: 'dQw4w9WgXcQ',
@@ -15,10 +31,10 @@ const MOCK_VIDEOS: Record<string, VideoMetadata> = {
     viewCount: '1.5B views',
     description: 'The official video for "Never Gonna Give You Up" by Rick Astley.',
   },
-  'jNQvPA2VpB8': {
-    id: 'jNQvPA2VpB8',
+  'jNQXATDIZ0w': {
+    id: 'jNQXATDIZ0w',
     title: 'Amazing Nature Documentary - 4K Ultra HD',
-    thumbnail: getThumbnailUrl('jNQvPA2VpB8', 'maxres'),
+    thumbnail: getThumbnailUrl('jNQXATDIZ0w', 'maxres'),
     channel: 'Nature Films',
     duration: '12:34',
     uploadDate: '2024-03-15',
@@ -26,35 +42,24 @@ const MOCK_VIDEOS: Record<string, VideoMetadata> = {
     viewCount: '2.3M views',
     description: 'Stunning nature footage in 4K resolution.',
   },
-  'shorts001': {
-    id: 'shorts001',
-    title: 'Incredible Sunset Timelapse 🌅 #shorts',
-    thumbnail: getThumbnailUrl('shorts001', 'high'),
-    channel: 'Timelapse Daily',
-    duration: '0:45',
-    uploadDate: '2024-06-20',
-    isShort: true,
-    viewCount: '890K views',
-    description: 'Beautiful sunset captured in timelapse.',
-  },
 };
 
 const MOCK_FORMATS_VIDEO: VideoFormat[] = [
-  { formatId: 'v-1080', quality: '1080p', resolution: '1920x1080', format: 'MP4', fileSize: '145 MB', hasAudio: true, hasVideo: true, type: 'video' },
-  { formatId: 'v-720', quality: '720p', resolution: '1280x720', format: 'MP4', fileSize: '85 MB', hasAudio: true, hasVideo: true, type: 'video' },
-  { formatId: 'v-480', quality: '480p', resolution: '854x480', format: 'MP4', fileSize: '45 MB', hasAudio: true, hasVideo: true, type: 'video' },
-  { formatId: 'v-360', quality: '360p', resolution: '640x360', format: 'MP4', fileSize: '25 MB', hasAudio: true, hasVideo: true, type: 'video' },
+  { formatId: '1080p', quality: '1080p', resolution: '1920x1080', format: 'MP4', fileSize: '—', hasAudio: true, hasVideo: true, type: 'video' },
+  { formatId: '720p', quality: '720p', resolution: '1280x720', format: 'MP4', fileSize: '—', hasAudio: true, hasVideo: true, type: 'video' },
+  { formatId: '480p', quality: '480p', resolution: '854x480', format: 'MP4', fileSize: '—', hasAudio: true, hasVideo: true, type: 'video' },
+  { formatId: '360p', quality: '360p', resolution: '640x360', format: 'MP4', fileSize: '—', hasAudio: true, hasVideo: true, type: 'video' },
 ];
 
 const MOCK_FORMATS_SHORT: VideoFormat[] = [
-  { formatId: 'v-1080s', quality: '1080p', resolution: '1080x1920', format: 'MP4', fileSize: '12 MB', hasAudio: true, hasVideo: true, type: 'video' },
-  { formatId: 'v-720s', quality: '720p', resolution: '720x1280', format: 'MP4', fileSize: '8 MB', hasAudio: true, hasVideo: true, type: 'video' },
-  { formatId: 'v-480s', quality: '480p', resolution: '480x854', format: 'MP4', fileSize: '5 MB', hasAudio: true, hasVideo: true, type: 'video' },
+  { formatId: '1080p', quality: '1080p', resolution: '1080x1920', format: 'MP4', fileSize: '—', hasAudio: true, hasVideo: true, type: 'video' },
+  { formatId: '720p', quality: '720p', resolution: '720x1280', format: 'MP4', fileSize: '—', hasAudio: true, hasVideo: true, type: 'video' },
+  { formatId: '480p', quality: '480p', resolution: '480x854', format: 'MP4', fileSize: '—', hasAudio: true, hasVideo: true, type: 'video' },
 ];
 
 const MOCK_FORMATS_AUDIO: VideoFormat[] = [
-  { formatId: 'a-m4a', quality: '192kbps', format: 'M4A', fileSize: '8 MB', hasAudio: true, hasVideo: false, type: 'audio' },
-  { formatId: 'a-mp3', quality: '320kbps', format: 'MP3', fileSize: '12 MB', hasAudio: true, hasVideo: false, type: 'audio' },
+  { formatId: 'audio-m4a', quality: '192kbps', format: 'M4A', fileSize: '—', hasAudio: true, hasVideo: false, type: 'audio' },
+  { formatId: 'audio-mp3', quality: '128kbps', format: 'MP3', fileSize: '—', hasAudio: true, hasVideo: false, type: 'audio' },
 ];
 
 export async function validateUrl(url: string): Promise<{ valid: boolean; videoId: string | null; isShort: boolean }> {
@@ -72,7 +77,6 @@ export async function getMetadata(videoId: string): Promise<VideoMetadata | null
     return MOCK_VIDEOS[videoId];
   }
 
-  // Generate a plausible mock for any video ID
   const isShort = videoId.startsWith('short') || videoId.length <= 8;
   return {
     id: videoId,
@@ -93,9 +97,13 @@ export async function getAvailableFormats(isShort: boolean): Promise<VideoFormat
   return [...videoFormats, ...MOCK_FORMATS_AUDIO];
 }
 
+/**
+ * Analyze a YouTube URL.
+ * 
+ * Tries the real /api/analyze endpoint first (which uses YouTube oEmbed).
+ * Falls back to local mock data if the API is not available.
+ */
 export async function analyzeVideo(url: string): Promise<AnalyzeResponse> {
-  await sleep(500);
-
   const validation = await validateUrl(url);
   if (!validation.valid || !validation.videoId) {
     return {
@@ -104,6 +112,47 @@ export async function analyzeVideo(url: string): Promise<AnalyzeResponse> {
     };
   }
 
+  // Try the real API first
+  try {
+    const response = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (response.ok) {
+      const data = await response.json() as {
+        success: boolean;
+        video?: VideoMetadata;
+        formats?: VideoFormat[];
+        error?: string;
+        downloadAvailable?: boolean;
+      };
+
+      if (data.success && data.video) {
+        return {
+          success: true,
+          video: data.video,
+          formats: data.formats || await getAvailableFormats(data.video.isShort),
+        };
+      }
+
+      if (data.error) {
+        // API returned an error - use it
+        return {
+          success: false,
+          error: data.error,
+        };
+      }
+    }
+  } catch {
+    // API not available, fall through to mock
+    console.log('[videoService] /api/analyze not available, using fallback');
+  }
+
+  // Fallback to mock data
+  await sleep(500);
   const metadata = await getMetadata(validation.videoId);
   if (!metadata) {
     return {
@@ -121,6 +170,10 @@ export async function analyzeVideo(url: string): Promise<AnalyzeResponse> {
   };
 }
 
+/**
+ * Prepare download info for display purposes.
+ * The actual download is handled by downloadService.ts.
+ */
 export async function prepareDownload(videoId: string, formatId: string): Promise<{
   fileName: string;
   fileSize: string;
@@ -141,12 +194,12 @@ export async function prepareDownload(videoId: string, formatId: string): Promis
 
   return {
     fileName: `${safeTitle}.${selectedFormat.format.toLowerCase()}`,
-    fileSize: selectedFormat.fileSize || 'Unknown',
+    fileSize: selectedFormat.fileSize || '—',
     quality: selectedFormat.quality,
     format: selectedFormat.format,
   };
 }
 
 export function cleanup(): void {
-  // Cleanup temporary files - no-op in demo
+  // No-op
 }

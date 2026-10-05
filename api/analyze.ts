@@ -3,25 +3,19 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 /**
  * POST /api/analyze
  * 
- * Optionally uses a configured video provider to fetch real video metadata.
- * If no provider is configured, returns { configured: false } so the client
- * can fall back to its built-in metadata resolution.
+ * Analyzes a YouTube URL:
+ * 1. Fetches metadata from YouTube oEmbed API (public, no auth needed)
+ * 2. Checks if cobalt download provider is configured
+ * 3. Returns metadata + available formats
  * 
- * Request body:
- *   { url: string }
- * 
- * Returns:
- *   { success: true, video: {...}, formats: [...] } on success
- *   { success: false, error: { code, message } } on error
- *   { configured: false } when no provider is available
+ * Environment Variables:
+ * - COBALT_API_URL: (optional) URL of a cobalt API instance for downloads
+ * - COBALT_API_KEY: (optional) API key for the cobalt instance
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
-    return res.status(405).json({
-      success: false,
-      error: { code: 'METHOD_NOT_ALLOWED', message: 'Only POST requests are accepted.' },
-    });
+    return res.status(405).json({ success: false, error: 'Method not allowed' });
   }
 
   const { url } = req.body || {};
@@ -29,95 +23,93 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!url || typeof url !== 'string') {
     return res.status(400).json({
       success: false,
-      error: { code: 'INVALID_REQUEST', message: 'Missing or invalid URL.' },
+      error: 'Missing or invalid URL.',
     });
   }
 
-  const providerUrl = process.env.VIDEO_PROVIDER_URL;
-  const providerApiKey = process.env.VIDEO_PROVIDER_API_KEY;
-
-  // If no provider is configured, let the client handle it with its built-in logic
-  if (!providerUrl || !providerApiKey) {
-    console.log('[analyze] DIAGNOSTIC: No provider configured, returning configured: false');
-    return res.status(200).json({ configured: false });
+  const videoId = extractVideoId(url);
+  if (!videoId) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid YouTube URL. Please enter a valid YouTube video or Shorts link.',
+    });
   }
 
-  console.log('[analyze] DIAGNOSTIC: Provider configured, analyzing URL');
+  const isShort = /youtube\.com\/shorts\//.test(url);
+
+  console.log('[analyze] DIAGNOSTIC: Analyzing video', { videoId, isShort });
 
   try {
-    // Extract video ID from URL
-    const videoId = extractVideoId(url);
-    if (!videoId) {
-      return res.status(400).json({
+    // Fetch metadata from YouTube oEmbed (public API, no auth needed)
+    const metadata = await fetchYouTubeMetadata(videoId);
+
+    if (!metadata) {
+      console.log('[analyze] DIAGNOSTIC: oEmbed returned no data for', videoId);
+      return res.status(404).json({
         success: false,
-        error: { code: 'INVALID_URL', message: 'Could not extract a valid video ID from the URL.' },
+        error: 'Video not found or unavailable.',
       });
     }
 
-    // Call provider for metadata
-    const providerResponse = await fetch(providerUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${providerApiKey}`,
-        'X-API-Key': providerApiKey,
-      },
-      body: JSON.stringify({
-        action: 'analyze',
-        videoId,
-        url,
-      }),
-      signal: AbortSignal.timeout(15000),
-    });
+    // Check if download provider is configured
+    const cobaltUrl = process.env.COBALT_API_URL;
+    const downloadAvailable = !!cobaltUrl;
 
-    console.log('[analyze] DIAGNOSTIC: Provider responded with status', providerResponse.status);
-
-    if (!providerResponse.ok) {
-      if (providerResponse.status === 404) {
-        return res.status(404).json({
-          success: false,
-          error: { code: 'VIDEO_NOT_FOUND', message: 'The video was not found.' },
-        });
-      }
-      return res.status(502).json({
-        success: false,
-        error: { code: 'PROVIDER_ERROR', message: `Provider returned HTTP ${providerResponse.status}.` },
-      });
-    }
-
-    const data = await providerResponse.json() as Record<string, unknown>;
-
-    // Validate that the provider returned expected fields
-    if (!data.video || typeof data.video !== 'object') {
-      return res.status(502).json({
-        success: false,
-        error: { code: 'INVALID_PROVIDER_RESPONSE', message: 'Provider did not return valid video data.' },
-      });
-    }
+    console.log('[analyze] DIAGNOSTIC: Download available:', downloadAvailable);
 
     return res.status(200).json({
       success: true,
-      configured: true,
-      video: data.video,
-      formats: data.formats || [],
+      video: {
+        id: videoId,
+        title: metadata.title,
+        thumbnail: `https://img.youtube.com/vi/${videoId}/${isShort ? 'hq' : 'max'}default.jpg`,
+        channel: metadata.author_name,
+        duration: '—',
+        uploadDate: new Date().toISOString().split('T')[0],
+        isShort,
+      },
+      formats: getFormats(isShort),
+      downloadAvailable,
     });
-
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.log('[analyze] DIAGNOSTIC: Error:', errorMessage);
-
-    if (errorMessage.includes('timeout')) {
-      return res.status(504).json({
-        success: false,
-        error: { code: 'PROVIDER_TIMEOUT', message: 'The video provider did not respond in time.' },
-      });
-    }
-
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.log('[analyze] DIAGNOSTIC: Error:', message);
     return res.status(500).json({
       success: false,
-      error: { code: 'INTERNAL_ERROR', message: 'An internal error occurred.' },
+      error: 'Failed to analyze video. Please try again.',
     });
   }
+}
+
+async function fetchYouTubeMetadata(videoId: string): Promise<{ title: string; author_name: string } | null> {
+  try {
+    const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+    const response = await fetch(oembedUrl, { signal: AbortSignal.timeout(8000) });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json() as { title: string; author_name: string };
+    return { title: data.title, author_name: data.author_name };
+  } catch {
+    return null;
+  }
+}
+
+function getFormats(isShort: boolean) {
+  const videoFormats = [
+    { formatId: '1080p', quality: '1080p', resolution: isShort ? '1080x1920' : '1920x1080', format: 'MP4', fileSize: '—', hasAudio: true, hasVideo: true, type: 'video' as const },
+    { formatId: '720p', quality: '720p', resolution: isShort ? '720x1280' : '1280x720', format: 'MP4', fileSize: '—', hasAudio: true, hasVideo: true, type: 'video' as const },
+    { formatId: '480p', quality: '480p', resolution: isShort ? '480x854' : '854x480', format: 'MP4', fileSize: '—', hasAudio: true, hasVideo: true, type: 'video' as const },
+    { formatId: '360p', quality: '360p', resolution: isShort ? '360x640' : '640x360', format: 'MP4', fileSize: '—', hasAudio: true, hasVideo: true, type: 'video' as const },
+  ];
+
+  const audioFormats = [
+    { formatId: 'audio-mp3', quality: '128kbps', format: 'MP3', fileSize: '—', hasAudio: true, hasVideo: false, type: 'audio' as const },
+  ];
+
+  return [...videoFormats, ...audioFormats];
 }
 
 function extractVideoId(url: string): string | null {

@@ -131,12 +131,13 @@ export default function HomePage() {
         }
       }, 300);
 
-      // Call the real download API
+      // Call the real download API with the original YouTube URL
       const result = await requestDownload({
         videoId: video.id,
         formatId: format.formatId,
         quality: format.quality,
         format: format.format,
+        url: lastUrl,
       });
 
       // Stop the progress simulation
@@ -197,7 +198,7 @@ export default function HomePage() {
         type: 'download',
       });
     }
-  }, [video]);
+  }, [video, lastUrl]);
 
   const handleCancel = useCallback(() => {
     cancelRef.current = true;
