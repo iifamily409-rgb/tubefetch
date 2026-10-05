@@ -234,7 +234,7 @@ describe('requestDownload', () => {
 
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('PROVIDER_NOT_CONFIGURED');
-      expect(result.error?.message).toContain('COBALT_API_URL');
+      expect(result.error?.message).toContain('VIDEO_PROVIDER_URL');
     });
   });
 
@@ -433,7 +433,7 @@ describe('checkDownloadAvailability', () => {
 
     const result = await checkDownloadAvailability();
     expect(result.available).toBe(false);
-    expect(result.reason).toContain('COBALT_API_URL');
+    expect(result.reason).toContain('VIDEO_PROVIDER_URL');
   });
 
   it('should return unavailable on network error', async () => {

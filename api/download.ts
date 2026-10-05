@@ -3,24 +3,31 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 /**
  * POST /api/download
  * 
- * Downloads a YouTube video using cobalt API.
+ * Downloads media using a Cobalt API instance.
+ * 
+ * Cobalt API Documentation:
+ * https://github.com/imputnet/cobalt/blob/main/docs/api.md
  * 
  * Environment Variables:
- * - COBALT_API_URL: (required) URL of a cobalt API instance
- * - COBALT_API_KEY: (optional) API key for the cobalt instance
+ * - VIDEO_PROVIDER_URL: (required) URL of your Cobalt instance
+ * - VIDEO_PROVIDER_API_KEY: (optional) API key if the instance requires auth
  * 
  * Request Body:
  * {
  *   videoId: string,
- *   formatId: string,  // e.g., "1080p", "720p", "audio-mp3"
+ *   formatId: string,  // "1080p" | "720p" | "480p" | "360p" | "audio-mp3"
  *   url: string        // original YouTube URL
  * }
  * 
- * Returns:
- * - Streams the media file with proper Content-Type and Content-Disposition
- * - Or returns JSON error if download fails
+ * Cobalt Response Types:
+ * - "tunnel": Cobalt proxies the file → we fetch from tunnel URL and stream to client
+ * - "redirect": Direct URL to media → we redirect the client
+ * - "error": Processing failed → we return structured error
+ * - "picker": Multiple items → not applicable for single YouTube videos
+ * - "local-processing": Requires local ffmpeg → not supported in serverless
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Only allow POST
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({
@@ -53,7 +60,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  // Validate videoId format
+  // Validate videoId format (YouTube IDs are 11 chars)
   if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
     return res.status(400).json({
       success: false,
@@ -61,53 +68,87 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  // Check cobalt configuration
-  const cobaltUrl = process.env.COBALT_API_URL;
-  const cobaltApiKey = process.env.COBALT_API_KEY;
+  // Check provider configuration
+  const providerUrl = process.env.VIDEO_PROVIDER_URL;
+  const providerApiKey = process.env.VIDEO_PROVIDER_API_KEY;
 
-  if (!cobaltUrl) {
-    console.log('[download] DIAGNOSTIC: COBALT_API_URL is not configured');
+  if (!providerUrl) {
+    console.log('[download] DIAGNOSTIC: VIDEO_PROVIDER_URL is not configured');
     return res.status(503).json({
       success: false,
       error: {
         code: 'PROVIDER_NOT_CONFIGURED',
-        message: 'Download provider is not configured. Set COBALT_API_URL environment variable to enable downloads. See README.md for setup instructions.',
+        message: 'Download provider is not configured. Set VIDEO_PROVIDER_URL to your Cobalt instance URL. See README.md for setup instructions.',
       },
     });
   }
 
-  console.log('[download] DIAGNOSTIC: Request received', { videoId, formatId, url });
+  console.log('[download] DIAGNOSTIC: Request received', { videoId, formatId });
+  console.log('[download] DIAGNOSTIC: Provider URL:', providerUrl);
 
   try {
-    // Prepare cobalt request based on format
+    // Build Cobalt API request according to official schema
+    // https://github.com/imputnet/cobalt/blob/main/docs/api.md#api-schema
     const cobaltRequest = buildCobaltRequest(url, formatId);
 
-    console.log('[download] DIAGNOSTIC: Calling cobalt at', cobaltUrl);
+    console.log('[download] DIAGNOSTIC: Calling Cobalt with params:', JSON.stringify(cobaltRequest));
 
-    // Call cobalt API
-    const cobaltResponse = await fetch(cobaltUrl, {
+    // Call Cobalt API
+    // Required headers per official docs:
+    // Accept: application/json
+    // Content-Type: application/json
+    const cobaltHeaders: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    };
+
+    // Add API key authentication if configured
+    // Per official docs: Authorization: Api-Key <key>
+    if (providerApiKey) {
+      cobaltHeaders['Authorization'] = `Api-Key ${providerApiKey}`;
+    }
+
+    const cobaltResponse = await fetch(providerUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        ...(cobaltApiKey ? { 'Authorization': `Api-Key ${cobaltApiKey}` } : {}),
-      },
+      headers: cobaltHeaders,
       body: JSON.stringify(cobaltRequest),
       signal: AbortSignal.timeout(30000),
     });
 
-    console.log('[download] DIAGNOSTIC: Cobalt responded with status', cobaltResponse.status);
+    console.log('[download] DIAGNOSTIC: Cobalt responded with HTTP', cobaltResponse.status);
 
+    // Handle HTTP errors from Cobalt
     if (!cobaltResponse.ok) {
       const errorText = await cobaltResponse.text().catch(() => 'Unknown error');
-      console.log('[download] DIAGNOSTIC: Cobalt error:', errorText.substring(0, 200));
+      console.log('[download] DIAGNOSTIC: Cobalt HTTP error:', errorText.substring(0, 300));
 
-      if (cobaltResponse.status === 401 || cobaltResponse.status === 403) {
+      // Map Cobalt HTTP errors to our error codes
+      if (cobaltResponse.status === 401) {
+        return res.status(502).json({
+          success: false,
+          error: {
+            code: 'PROVIDER_AUTH_REQUIRED',
+            message: 'Cobalt instance requires authentication. Set VIDEO_PROVIDER_API_KEY or disable auth on your instance.',
+          },
+        });
+      }
+
+      if (cobaltResponse.status === 403) {
         return res.status(502).json({
           success: false,
           error: {
             code: 'PROVIDER_AUTH_FAILED',
-            message: 'Cobalt API authentication failed. Check your COBALT_API_KEY configuration.',
+            message: 'Cobalt instance rejected the API key. Check your VIDEO_PROVIDER_API_KEY configuration.',
+          },
+        });
+      }
+
+      if (cobaltResponse.status === 429) {
+        return res.status(502).json({
+          success: false,
+          error: {
+            code: 'PROVIDER_RATE_LIMITED',
+            message: 'Cobalt instance rate limit exceeded. Please try again later.',
           },
         });
       }
@@ -115,66 +156,134 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(502).json({
         success: false,
         error: {
-          code: 'PROVIDER_ERROR',
+          code: 'PROVIDER_HTTP_ERROR',
           message: `Cobalt API returned HTTP ${cobaltResponse.status}.`,
         },
       });
     }
 
+    // Parse Cobalt JSON response
+    // Per official docs, response always contains a "status" key
     const cobaltData = await cobaltResponse.json() as any;
+
     console.log('[download] DIAGNOSTIC: Cobalt response status:', cobaltData.status);
 
-    // Handle cobalt error response
+    // Handle Cobalt error response
+    // Per official docs: { status: "error", error: { code: string, context?: object } }
     if (cobaltData.status === 'error') {
+      const errorCode = cobaltData.error?.code || 'COBALT_ERROR';
+      const errorContext = cobaltData.error?.context;
+
+      console.log('[download] DIAGNOSTIC: Cobalt error:', errorCode, errorContext);
+
+      // Map common Cobalt error codes to user-friendly messages
+      let userMessage = `Cobalt processing error: ${errorCode}`;
+
+      if (errorCode.includes('api.auth')) {
+        userMessage = 'Cobalt instance requires authentication. Contact the instance owner or set VIDEO_PROVIDER_API_KEY.';
+      } else if (errorCode === 'content.video.unavailable') {
+        userMessage = 'The video is unavailable or has been removed.';
+      } else if (errorCode === 'content.video.live') {
+        userMessage = 'Live streams cannot be downloaded.';
+      } else if (errorCode === 'content.video.duration') {
+        userMessage = 'The video is too long to process.';
+      } else if (errorCode === 'fetch.fail') {
+        userMessage = 'Failed to fetch the video from YouTube. The video may be private or region-locked.';
+      } else if (errorCode.includes('rate')) {
+        userMessage = 'Rate limit exceeded. Please try again later.';
+      }
+
       return res.status(502).json({
         success: false,
         error: {
-          code: cobaltData.error?.code || 'COBALT_ERROR',
-          message: `Cobalt processing error: ${cobaltData.error?.code || 'Unknown error'}`,
+          code: errorCode,
+          message: userMessage,
         },
       });
     }
 
-    // Handle tunnel mode (cobalt proxies the file)
+    // Handle tunnel response
+    // Per official docs: { status: "tunnel", url: string, filename: string }
+    // The URL points to GET /tunnel endpoint which streams the actual media
     if (cobaltData.status === 'tunnel') {
       const tunnelUrl = cobaltData.url;
       const fileName = cobaltData.filename || generateFileName(videoId, formatId);
 
-      console.log('[download] DIAGNOSTIC: Fetching media from tunnel URL');
-
-      // Fetch the actual media from cobalt's tunnel
-      const mediaResponse = await fetch(tunnelUrl, {
-        headers: cobaltApiKey ? { 'Authorization': `Api-Key ${cobaltApiKey}` } : {},
-        signal: AbortSignal.timeout(60000),
-      });
-
-      console.log('[download] DIAGNOSTIC: Media fetch status:', mediaResponse.status);
-      console.log('[download] DIAGNOSTIC: Media Content-Type:', mediaResponse.headers.get('content-type'));
-      console.log('[download] DIAGNOSTIC: Media Content-Length:', mediaResponse.headers.get('content-length'));
-
-      if (!mediaResponse.ok) {
+      if (!tunnelUrl || typeof tunnelUrl !== 'string') {
+        console.log('[download] DIAGNOSTIC: Cobalt tunnel response missing URL');
         return res.status(502).json({
           success: false,
-          error: { code: 'MEDIA_FETCH_FAILED', message: 'Failed to fetch media from cobalt tunnel.' },
+          error: {
+            code: 'INVALID_TUNNEL_RESPONSE',
+            message: 'Cobalt returned a tunnel response without a valid URL.',
+          },
+        });
+      }
+
+      console.log('[download] DIAGNOSTIC: Fetching media from Cobalt tunnel');
+
+      // Fetch the actual media from Cobalt's tunnel endpoint
+      // Per official docs, GET /tunnel returns a file stream
+      const tunnelHeaders: Record<string, string> = {};
+      if (providerApiKey) {
+        tunnelHeaders['Authorization'] = `Api-Key ${providerApiKey}`;
+      }
+
+      const mediaResponse = await fetch(tunnelUrl, {
+        headers: tunnelHeaders,
+        signal: AbortSignal.timeout(120000), // 2 minute timeout for large files
+      });
+
+      console.log('[download] DIAGNOSTIC: Tunnel fetch status:', mediaResponse.status);
+      console.log('[download] DIAGNOSTIC: Tunnel Content-Type:', mediaResponse.headers.get('content-type'));
+      console.log('[download] DIAGNOSTIC: Tunnel Content-Length:', mediaResponse.headers.get('content-length'));
+
+      if (!mediaResponse.ok) {
+        // Tunnel endpoint returns errors via HTTP status codes per official docs
+        if (mediaResponse.status === 401) {
+          return res.status(502).json({
+            success: false,
+            error: { code: 'TUNNEL_UNAUTHORIZED', message: 'Cobalt tunnel requires authentication.' },
+          });
+        }
+        if (mediaResponse.status === 404) {
+          return res.status(502).json({
+            success: false,
+            error: { code: 'TUNNEL_NOT_FOUND', message: 'The media tunnel has expired. Please try again.' },
+          });
+        }
+        if (mediaResponse.status === 429) {
+          return res.status(502).json({
+            success: false,
+            error: { code: 'TUNNEL_RATE_LIMITED', message: 'Cobalt tunnel rate limit exceeded.' },
+          });
+        }
+
+        return res.status(502).json({
+          success: false,
+          error: {
+            code: 'TUNNEL_FETCH_FAILED',
+            message: `Failed to fetch media from Cobalt tunnel (HTTP ${mediaResponse.status}).`,
+          },
         });
       }
 
       const mediaContentType = mediaResponse.headers.get('content-type') || 'video/mp4';
       const mediaContentLength = mediaResponse.headers.get('content-length');
 
-      // Verify it's actual media
+      // Verify the response is actual media (not an error page)
       if (!isMediaContentType(mediaContentType)) {
-        console.log('[download] DIAGNOSTIC: Non-media content type:', mediaContentType);
+        console.log('[download] DIAGNOSTIC: Tunnel returned non-media type:', mediaContentType);
         return res.status(502).json({
           success: false,
           error: {
-            code: 'INVALID_MEDIA_RESPONSE',
-            message: 'Cobalt returned a non-media response.',
+            code: 'INVALID_MEDIA_TYPE',
+            message: `Cobalt tunnel returned "${mediaContentType}" instead of media.`,
           },
         });
       }
 
-      // Verify content length
+      // Verify content length is reasonable
       if (mediaContentLength) {
         const size = parseInt(mediaContentLength, 10);
         if (size < 1024) {
@@ -183,15 +292,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             success: false,
             error: {
               code: 'MEDIA_TOO_SMALL',
-              message: 'The media resource is too small to be valid.',
+              message: `Media is only ${size} bytes. The download link may have expired.`,
             },
           });
         }
       }
 
-      // Stream media to client
+      // Stream media to the client
       res.setHeader('Content-Type', mediaContentType);
-      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${sanitizeFilename(fileName)}"`);
       if (mediaContentLength) {
         res.setHeader('Content-Length', mediaContentLength);
       }
@@ -209,44 +318,92 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
           }
           res.end();
+          console.log('[download] DIAGNOSTIC: Media stream completed successfully');
         } catch (streamError) {
           console.log('[download] DIAGNOSTIC: Stream error:', (streamError as Error).message);
           if (!res.headersSent) {
             return res.status(500).json({
               success: false,
-              error: { code: 'STREAM_ERROR', message: 'Error while streaming media.' },
+              error: { code: 'STREAM_ERROR', message: 'Error while streaming media to client.' },
             });
           }
           res.end();
         }
       } else {
+        // Fallback: buffer the entire response
         const buffer = await mediaResponse.arrayBuffer();
+        if (buffer.byteLength < 1024) {
+          return res.status(502).json({
+            success: false,
+            error: { code: 'MEDIA_TOO_SMALL', message: 'Media is too small to be valid.' },
+          });
+        }
+        res.setHeader('Content-Length', buffer.byteLength.toString());
         res.end(Buffer.from(buffer));
+        console.log('[download] DIAGNOSTIC: Media buffer completed');
       }
 
-      console.log('[download] DIAGNOSTIC: Media stream completed');
       return;
     }
 
-    // Handle redirect mode (direct URL)
+    // Handle redirect response
+    // Per official docs: { status: "redirect", url: string, filename: string }
+    // The URL is a direct link to the media on the original service
     if (cobaltData.status === 'redirect') {
       const mediaUrl = cobaltData.url;
       const fileName = cobaltData.filename || generateFileName(videoId, formatId);
 
-      console.log('[download] DIAGNOSTIC: Redirecting to media URL');
+      if (!mediaUrl || typeof mediaUrl !== 'string') {
+        return res.status(502).json({
+          success: false,
+          error: {
+            code: 'INVALID_REDIRECT_RESPONSE',
+            message: 'Cobalt returned a redirect response without a valid URL.',
+          },
+        });
+      }
 
-      // Redirect the client to the media URL
+      console.log('[download] DIAGNOSTIC: Redirecting client to media URL');
+
+      // Option 1: Redirect the client directly (simpler, less bandwidth on our server)
+      // Option 2: Proxy through our server (more control, but uses our bandwidth)
+      // We'll redirect directly since the URL is from a trusted source (Cobalt)
+      res.setHeader('Content-Disposition', `attachment; filename="${sanitizeFilename(fileName)}"`);
       res.redirect(302, mediaUrl);
       return;
     }
 
-    // Unexpected response
-    console.log('[download] DIAGNOSTIC: Unexpected cobalt status:', cobaltData.status);
+    // Handle picker response (multiple items)
+    // Not applicable for single YouTube videos, but handle gracefully
+    if (cobaltData.status === 'picker') {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'MULTIPLE_ITEMS',
+          message: 'This URL contains multiple media items. Please select a specific video.',
+        },
+      });
+    }
+
+    // Handle local-processing response
+    // This requires local ffmpeg which we cannot do in serverless
+    if (cobaltData.status === 'local-processing') {
+      return res.status(501).json({
+        success: false,
+        error: {
+          code: 'LOCAL_PROCESSING_REQUIRED',
+          message: 'This format requires local processing which is not supported in serverless. Try a different quality or format.',
+        },
+      });
+    }
+
+    // Unexpected response status
+    console.log('[download] DIAGNOSTIC: Unexpected Cobalt status:', cobaltData.status);
     return res.status(502).json({
       success: false,
       error: {
         code: 'UNEXPECTED_RESPONSE',
-        message: `Unexpected cobalt response: ${cobaltData.status}`,
+        message: `Unexpected Cobalt response: ${cobaltData.status}`,
       },
     });
 
@@ -262,50 +419,119 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (errorMessage.includes('timeout') || errorMessage.includes('aborted')) {
       return res.status(504).json({
         success: false,
-        error: { code: 'PROVIDER_TIMEOUT', message: 'Cobalt API did not respond in time.' },
+        error: { code: 'PROVIDER_TIMEOUT', message: 'Cobalt API did not respond in time. Please try again.' },
+      });
+    }
+
+    if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND')) {
+      return res.status(502).json({
+        success: false,
+        error: {
+          code: 'PROVIDER_UNREACHABLE',
+          message: 'Cannot reach the Cobalt instance. Check your VIDEO_PROVIDER_URL configuration.',
+        },
       });
     }
 
     return res.status(500).json({
       success: false,
-      error: { code: 'INTERNAL_ERROR', message: 'An internal error occurred.' },
+      error: { code: 'INTERNAL_ERROR', message: 'An internal error occurred while processing the download.' },
     });
   }
 }
 
 /**
- * Build cobalt API request based on format
+ * Build Cobalt API request according to official schema
+ * https://github.com/imputnet/cobalt/blob/main/docs/api.md#api-schema
  */
-function buildCobaltRequest(url: string, formatId: string): any {
+function buildCobaltRequest(url: string, formatId: string): Record<string, any> {
+  // Base request with required fields
   const baseRequest = {
     url,
+    // Use "pretty" filename style for user-friendly names
     filenameStyle: 'pretty',
+    // Use h264 codec for maximum compatibility
     youtubeVideoCodec: 'h264',
   };
 
   switch (formatId) {
     case '1080p':
-      return { ...baseRequest, videoQuality: '1080', downloadMode: 'auto' };
+      return {
+        ...baseRequest,
+        videoQuality: '1080',
+        downloadMode: 'auto',
+      };
     case '720p':
-      return { ...baseRequest, videoQuality: '720', downloadMode: 'auto' };
+      return {
+        ...baseRequest,
+        videoQuality: '720',
+        downloadMode: 'auto',
+      };
     case '480p':
-      return { ...baseRequest, videoQuality: '480', downloadMode: 'auto' };
+      return {
+        ...baseRequest,
+        videoQuality: '480',
+        downloadMode: 'auto',
+      };
     case '360p':
-      return { ...baseRequest, videoQuality: '360', downloadMode: 'auto' };
+      return {
+        ...baseRequest,
+        videoQuality: '360',
+        downloadMode: 'auto',
+      };
     case 'audio-mp3':
-      return { ...baseRequest, downloadMode: 'audio', audioFormat: 'mp3', audioBitrate: '128' };
+      return {
+        ...baseRequest,
+        downloadMode: 'audio',
+        audioFormat: 'mp3',
+        audioBitrate: '128',
+      };
+    case 'audio-m4a':
+      return {
+        ...baseRequest,
+        downloadMode: 'audio',
+        audioFormat: 'best',
+        audioBitrate: '192',
+      };
     default:
-      return { ...baseRequest, videoQuality: '720', downloadMode: 'auto' };
+      // Default to 720p video
+      return {
+        ...baseRequest,
+        videoQuality: '720',
+        downloadMode: 'auto',
+      };
   }
 }
 
+/**
+ * Check if a content type represents actual media data
+ */
 function isMediaContentType(contentType: string): boolean {
   if (!contentType) return false;
-  const mediaTypes = ['video/', 'audio/', 'application/octet-stream'];
+  const mediaTypes = [
+    'video/',
+    'audio/',
+    'application/octet-stream',
+    'application/mp4',
+    'audio/mp4',
+    'audio/mpeg',
+    'audio/x-m4a',
+  ];
   return mediaTypes.some(type => contentType.toLowerCase().includes(type));
 }
 
+/**
+ * Generate a safe filename for the download
+ */
 function generateFileName(videoId: string, formatId: string): string {
-  const ext = formatId === 'audio-mp3' ? 'mp3' : 'mp4';
+  const ext = formatId.startsWith('audio') ? (formatId === 'audio-mp3' ? 'mp3' : 'm4a') : 'mp4';
   return `youtube_${videoId}.${ext}`;
+}
+
+/**
+ * Sanitize filename to prevent header injection
+ */
+function sanitizeFilename(filename: string): string {
+  // Remove any characters that could cause issues in Content-Disposition header
+  return filename.replace(/[^a-zA-Z0-9_\-\. ]/g, '_').substring(0, 255);
 }

@@ -1,261 +1,353 @@
 # TubeFetch
 
-A modern YouTube video and Shorts downloader interface.
+A modern YouTube video and Shorts downloader built with Next.js 14, TypeScript, and Tailwind CSS.
 
-![TubeFetch](https://img.shields.io/badge/TubeFetch-v1.0.0-purple)
+![TubeFetch](https://img.shields.io/badge/TubeFetch-YouTube%20Downloader-purple)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)
 
-## Features
+## 🎯 Overview
 
-- 🎬 Download YouTube videos in multiple qualities (1080p, 720p, 480p, 360p)
-- 📱 Full YouTube Shorts support with automatic detection
-- 🎵 Audio extraction (MP3, M4A)
-- ⚡ Lightning-fast analysis and download preparation
-- 🎨 Premium dark UI with glassmorphism design
-- 🌓 Dark/Light theme support
-- 📱 Fully responsive design (mobile, tablet, desktop)
-- 🔒 No registration required
-- 🚫 No ads, no tracking
+TubeFetch is a full-stack web application that provides a clean, modern interface for downloading YouTube videos and Shorts. It features:
 
-## Screenshots
+- **Real-time video analysis** using YouTube's oEmbed API
+- **Multiple quality options** (1080p, 720p, 480p, 360p)
+- **Audio extraction** (MP3, M4A)
+- **Dark/Light theme** with system preference detection
+- **Responsive design** optimized for mobile and desktop
+- **Robust error handling** with user-friendly messages
 
-The application features:
-- Clean hero section with URL input
-- Video preview with thumbnail and metadata
-- Quality selector with video and audio options
-- Real-time download progress tracking
-- Beautiful error states
+## 🏗️ Architecture
 
-## Tech Stack
-
-- **Framework**: React 18 + TypeScript
-- **Build Tool**: Vite
-- **Styling**: Tailwind CSS 4
-- **Routing**: React Router 6
-- **Animations**: Framer Motion
-- **Icons**: Lucide React
-- **Testing**: Vitest + Testing Library
-- **Language**: TypeScript (strict mode)
-
-## Project Structure
-
-```text
-tubefetch/
-├── .github/
-│   └── workflows/
-│       └── ci.yml
-├── public/
-│   ├── favicon.svg
-│   └── logo.svg
-├── src/
-│   ├── components/
-│   │   ├── Header.tsx
-│   │   ├── Footer.tsx
-│   │   ├── Hero.tsx
-│   │   ├── UrlInput.tsx
-│   │   ├── VideoPreview.tsx
-│   │   ├── DownloadOptions.tsx
-│   │   ├── DownloadProgress.tsx
-│   │   ├── ErrorState.tsx
-│   │   ├── LoadingSkeleton.tsx
-│   │   ├── FeatureCard.tsx
-│   │   ├── HowItWorks.tsx
-│   │   ├── FAQ.tsx
-│   │   └── ThemeToggle.tsx
-│   ├── pages/
-│   │   ├── HomePage.tsx
-│   │   ├── AboutPage.tsx
-│   │   ├── FAQPage.tsx
-│   │   ├── SupportedFormatsPage.tsx
-│   │   └── HowItWorksPage.tsx
-│   ├── services/
-│   │   └── videoService.ts
-│   ├── lib/
-│   │   ├── validation.ts
-│   │   └── utils.ts
-│   ├── types/
-│   │   └── video.ts
-│   ├── config/
-│   │   └── site.ts
-│   ├── App.tsx
-│   ├── main.tsx
-│   └── index.css
-├── tests/
-│   ├── validation.test.ts
-│   └── videoService.test.ts
-├── .env.example
-├── .gitignore
-├── index.html
-├── package.json
-├── README.md
-├── CONTRIBUTING.md
-├── LICENSE
-└── tsconfig.json
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Frontend (Vercel)                     │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │   React UI   │  │  TypeScript  │  │ Tailwind CSS │      │
+│  └──────────────┘  └──────────────┘  └──────────────┘      │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+                    Vercel Serverless Functions
+                    ┌──────────────────┐
+                    │  /api/analyze    │ → YouTube oEmbed API (public)
+                    │  /api/download   │ → Cobalt Instance
+                    └──────────────────┘
+                            ↓
+              ┌─────────────────────────────┐
+              │   Cobalt Instance (External) │
+              │   (Railway / Docker / VPS)   │
+              │                              │
+              │  - ffmpeg for processing     │
+              │  - Persistent Node.js        │
+              │  - Handles YouTube/Shorts    │
+              └─────────────────────────────┘
 ```
 
-## Installation
+### Why Cobalt Cannot Run on Vercel
+
+Cobalt requires:
+- **ffmpeg** binary for video/audio processing
+- **Persistent processes** (not compatible with serverless)
+- **Docker container** or VPS environment
+- **Stateful operations** (file processing, temporary storage)
+
+Vercel serverless functions are:
+- Ephemeral (no persistent state)
+- Time-limited (10 seconds on hobby, 60 seconds on pro)
+- Cannot run Docker containers
+- Cannot install system binaries like ffmpeg
+
+**Solution:** Deploy Cobalt separately on Railway, Render, or a VPS, then connect TubeFetch via `VIDEO_PROVIDER_URL`.
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Node.js 18+ and npm
+- A Vercel account (free)
+- A Cobalt instance (see deployment options below)
+
+### 1. Clone and Install
 
 ```bash
-git clone https://github.com/tubefetch/tubefetch.git
+git clone https://github.com/yourusername/tubefetch.git
 cd tubefetch
 npm install
 ```
 
-## Environment Variables
-
-Create a `.env` file based on the example:
+### 2. Configure Environment
 
 ```bash
-cp .env.example .env
+cp .env.example .env.local
 ```
 
-```env
-VITE_APP_NAME=TubeFetch
-VITE_APP_URL=http://localhost:5173
+Edit `.env.local`:
 
-# REQUIRED for actual video downloads:
-VIDEO_PROVIDER_URL=
+```env
+# Required for downloads
+VIDEO_PROVIDER_URL=https://your-cobalt-instance.up.railway.app
+
+# Optional: API key if your Cobalt instance requires auth
 VIDEO_PROVIDER_API_KEY=
 ```
 
-### Download Provider Configuration
-
-TubeFetch uses **[cobalt](https://github.com/imputnet/cobalt)** (44.7k ⭐ on GitHub) as the download provider. Cobalt is an open-source media processing API that supports YouTube, YouTube Shorts, TikTok, Twitter, and more.
-
-**Important:** The official `api.cobalt.tools` instance has bot protection and is NOT for programmatic use. You must either self-host an instance or get access to a community instance.
-
-#### Option A: Self-host a cobalt instance (Recommended)
-
-1. Deploy cobalt on Railway, Render, Fly.io, or any Docker host:
-   ```bash
-   # Using Docker
-   docker pull ghcr.io/imputnet/cobalt:10
-   docker run -p 9000:9000 ghcr.io/imputnet/cobalt:10
-   ```
-   Full guide: https://github.com/imputnet/cobalt/blob/main/docs/run-an-instance.md
-
-2. Set environment variables in Vercel:
-   ```
-   COBALT_API_URL=https://your-cobalt-instance.example.com
-   COBALT_API_KEY=your-api-key  # Only if your instance requires auth
-   ```
-
-#### Option B: Use a community cobalt instance
-
-1. Find instances at: https://instances.cobalt.best/
-2. Contact the instance owner for API access
-3. Set the environment variables in Vercel
-
-#### Without a configured provider
-
-The app will:
-- ✅ Still analyze videos (using YouTube's public oEmbed API - no config needed)
-- ❌ Show a clear error when download is attempted
-- 📋 Display exact setup instructions in the error message
-
-## Development
+### 3. Run Development Server
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173) in your browser.
+Open [http://localhost:3000](http://localhost:3000)
 
-## Testing
+### 4. Build for Production
 
 ```bash
-# Run tests once
+npm run build
+npm start
+```
+
+## 🎬 Deploy Cobalt (Required for Downloads)
+
+### Option 1: Railway One-Click Deploy (Recommended)
+
+**Easiest method - no technical setup required**
+
+1. **Deploy Cobalt to Railway:**
+   - Go to: https://railway.com/deploy/cobalt-self-hosted-fix-youtube-downloads-on-railway--cobalt-youtube-downloader
+   - Click "Deploy"
+   - Wait for deployment (~2 minutes)
+   - Copy your instance URL (e.g., `https://cobalt-xxxx.up.railway.app`)
+
+2. **Configure TubeFetch:**
+   ```bash
+   # In your TubeFetch project
+   vercel env add VIDEO_PROVIDER_URL
+   # Paste: https://cobalt-xxxx.up.railway.app
+   ```
+
+3. **Deploy TubeFetch:**
+   ```bash
+   vercel --prod
+   ```
+
+**Railway Pricing:**
+- $5 free credit per month (no credit card required)
+- Cobalt typically uses $2-5/month for light usage
+- If you exceed free credits, paid plans start at $5/month
+
+### Option 2: Self-Host with Docker
+
+**Full control, requires a VPS**
+
+1. **Set up a VPS** (DigitalOcean, Hetzner, Linode, etc.)
+
+2. **Install Docker:**
+   ```bash
+   curl -fsSL https://get.docker.com -o get-docker.sh
+   sh get-docker.sh
+   ```
+
+3. **Deploy Cobalt:**
+   ```bash
+   git clone https://github.com/imputnet/cobalt
+   cd cobalt
+   docker-compose up -d
+   ```
+
+4. **Configure reverse proxy** (nginx/caddy) with HTTPS
+
+5. **Set VIDEO_PROVIDER_URL** to your domain
+
+Full guide: https://github.com/imputnet/cobalt/blob/main/docs/run-an-instance.md
+
+### Option 3: Community Instance
+
+Some community-maintained Cobalt instances allow API access:
+
+1. Visit: https://instances.cobalt.best/
+2. Find an instance that allows API access
+3. Contact the owner for an API key if required
+4. Set `VIDEO_PROVIDER_URL` and optionally `VIDEO_PROVIDER_API_KEY`
+
+**Note:** Community instances may have rate limits or availability issues.
+
+## 📁 Project Structure
+
+```
+tubefetch/
+├── api/                          # Vercel serverless functions
+│   ├── analyze.ts               # Video metadata (YouTube oEmbed)
+│   └── download.ts              # Media download (Cobalt proxy)
+├── src/
+│   ├── app/                     # Next.js app router
+│   │   ├── page.tsx            # Homepage
+│   │   ├── layout.tsx          # Root layout
+│   │   └── globals.css         # Global styles
+│   ├── components/             # React components
+│   │   ├── Header.tsx
+│   │   ├── Footer.tsx
+│   │   ├── UrlInput.tsx
+│   │   ├── VideoPreview.tsx
+│   │   ├── DownloadOptions.tsx
+│   │   ├── DownloadProgress.tsx
+│   │   └── ...
+│   ├── services/               # Business logic
+│   │   ├── videoService.ts     # Video analysis
+│   │   └── downloadService.ts  # Download handling
+│   ├── lib/                    # Utilities
+│   │   ├── validation.ts       # URL validation
+│   │   └── utils.ts            # Helper functions
+│   └── types/                  # TypeScript types
+│       └── video.ts
+├── tests/                      # Vitest tests
+│   ├── validation.test.ts
+│   ├── videoService.test.ts
+│   └── downloadService.test.ts
+├── public/                     # Static assets
+├── .env.example               # Environment template
+├── vercel.json                # Vercel config
+└── package.json
+```
+
+## 🔧 Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `VIDEO_PROVIDER_URL` | **Yes** (for downloads) | URL of your Cobalt instance |
+| `VIDEO_PROVIDER_API_KEY` | No | API key if your Cobalt instance requires auth |
+| `VITE_APP_NAME` | No | App name (default: TubeFetch) |
+| `VITE_APP_URL` | No | App URL (default: http://localhost:5173) |
+
+### What Happens Without VIDEO_PROVIDER_URL?
+
+- ✅ Video analysis works (uses YouTube oEmbed - public API)
+- ❌ Downloads fail with clear error message
+- ✅ UI shows "Provider not configured" error
+- ✅ Error includes setup instructions
+
+## 🧪 Testing
+
+```bash
+# Run all tests
 npm test
 
 # Watch mode
 npm run test:watch
+
+# Coverage report
+npm run test:coverage
 ```
 
-## Production Build
+### Test Coverage
+
+- ✅ URL validation (YouTube, Shorts, invalid URLs)
+- ✅ Video service (metadata fetching, format selection)
+- ✅ Download service (API responses, error handling)
+- ✅ Content-Type validation
+- ✅ File size validation
+- ✅ Network error handling
+
+## 📊 API Endpoints
+
+### POST /api/analyze
+
+Analyzes a YouTube URL and returns metadata.
+
+**Request:**
+```json
+{
+  "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "video": {
+    "id": "dQw4w9WgXcQ",
+    "title": "Rick Astley - Never Gonna Give You Up",
+    "thumbnail": "https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg",
+    "channel": "Rick Astley",
+    "duration": "3:33",
+    "uploadDate": "2009-10-25",
+    "isShort": false
+  },
+  "formats": [
+    { "formatId": "1080p", "quality": "1080p", "format": "MP4", "type": "video" },
+    { "formatId": "720p", "quality": "720p", "format": "MP4", "type": "video" },
+    { "formatId": "audio-mp3", "quality": "128kbps", "format": "MP3", "type": "audio" }
+  ]
+}
+```
+
+### POST /api/download
+
+Downloads media using Cobalt instance.
+
+**Request:**
+```json
+{
+  "videoId": "dQw4w9WgXcQ",
+  "formatId": "720p",
+  "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+}
+```
+
+**Response:**
+- Streams actual media file (video/mp4 or audio/mpeg)
+- Returns JSON error if download fails
+
+## 🛠️ Tech Stack
+
+- **Framework:** Vite + React 18
+- **Language:** TypeScript (strict mode)
+- **Styling:** Tailwind CSS 4
+- **Icons:** Lucide React
+- **Testing:** Vitest
+- **Deployment:** Vercel (frontend) + Railway (Cobalt)
+- **Video Processing:** Cobalt (open-source)
+
+## 📝 Development
 
 ```bash
+# Install dependencies
+npm install
+
+# Run dev server
+npm run dev
+
+# Build for production
 npm run build
+
+# Type checking
+npm run typecheck
+
+# Linting
+npm run lint
 ```
 
-The built files will be in the `dist/` directory.
+## 🤝 Contributing
 
-## Start Production Server
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
-```bash
-npm run preview
-```
+## 📄 License
 
-## Deployment
+MIT License - see [LICENSE](LICENSE) for details
 
-### Vercel
+## ⚠️ Disclaimer
 
-```bash
-npm install -g vercel
-vercel
-```
+TubeFetch is for educational purposes. Downloading YouTube videos may violate YouTube's Terms of Service. Always respect copyright and content creators' rights. Only download content you have permission to download.
 
-### Netlify
+## 🙏 Acknowledgments
 
-```bash
-npm run build
-# Upload dist/ folder to Netlify
-```
+- [Cobalt](https://github.com/imputnet/cobalt) - Open-source media processing
+- [YouTube oEmbed](https://www.youtube.com/oembed) - Public metadata API
+- [Vercel](https://vercel.com) - Frontend deployment
+- [Railway](https://railway.com) - Cobalt hosting
 
-### Docker
+## 📞 Support
 
-```dockerfile
-FROM node:20-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
-EXPOSE 4173
-CMD ["npm", "run", "preview", "--", "--host"]
-```
-
-## Contributing
-
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.
-
-## Architecture
-
-### Pipeline
-
-```
-Browser (React SPA on Vercel)
-    ↓ POST /api/analyze
-/api/analyze.ts
-    ↓ YouTube oEmbed API (public, no auth)
-Returns: video metadata + available formats
-
-    ↓ User selects quality, clicks download
-    ↓ POST /api/download
-/api/download.ts
-    ↓ POST to COBALT_API_URL (cobalt instance)
-Cobalt API
-    ↓ Returns tunnel URL or redirect URL
-/api/download.ts
-    ↓ Fetches actual media from tunnel/redirect
-    ↓ Streams media to browser with proper headers
-Browser receives actual media bytes
-    ↓ Creates Object URL from Blob
-File saved to disk
-```
-
-### Key Design Decisions
-
-1. **No fake downloads**: The frontend validates every response. If the provider doesn't return actual media bytes, the user sees a clear error.
-2. **Serverless-compatible**: No local filesystem, no background workers. Everything runs in Vercel serverless functions.
-3. **Provider-agnostic**: Works with any API that returns downloadable media.
-4. **Proper error propagation**: JSON errors from the API are surfaced to the user with actionable messages.
-5. **Content validation**: The download service checks Content-Type, Content-Length, and minimum file size before accepting a response as valid media.
-
-## Disclaimer
-
-TubeFetch is a demonstration project. Downloading YouTube videos may violate YouTube's Terms of Service. Always respect copyright and content creators' rights. This tool is for educational purposes only.
+- **Issues:** [GitHub Issues](https://github.com/yourusername/tubefetch/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/yourusername/tubefetch/discussions)
+- **Cobalt Docs:** https://github.com/imputnet/cobalt/blob/main/docs/api.md

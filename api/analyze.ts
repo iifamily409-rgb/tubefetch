@@ -52,8 +52,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Check if download provider is configured
-    const cobaltUrl = process.env.COBALT_API_URL;
-    const downloadAvailable = !!cobaltUrl;
+    const providerUrl = process.env.VIDEO_PROVIDER_URL;
+    const downloadAvailable = !!providerUrl;
 
     console.log('[analyze] DIAGNOSTIC: Download available:', downloadAvailable);
 
