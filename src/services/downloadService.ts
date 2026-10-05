@@ -319,7 +319,7 @@ export async function checkDownloadAvailability(): Promise<{ available: boolean;
       if (data.error?.code === 'PROVIDER_NOT_CONFIGURED') {
         return {
           available: false,
-          reason: 'Download provider (cobalt) is not configured. Set COBALT_API_URL environment variable.',
+          reason: 'Download provider is not configured. Set VIDEO_PROVIDER_TYPE and VIDEO_PROVIDER_URL environment variables.',
         };
       }
       return { available: true };

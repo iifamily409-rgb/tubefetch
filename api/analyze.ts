@@ -1,16 +1,17 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { getProvider, isProviderConfigured } from './lib/providers';
+import { isSafeUrl } from './lib/security';
 
 /**
  * POST /api/analyze
  * 
- * Analyzes a YouTube URL:
- * 1. Fetches metadata from YouTube oEmbed API (public, no auth needed)
- * 2. Checks if cobalt download provider is configured
- * 3. Returns metadata + available formats
+ * Analyzes a YouTube URL using the configured provider (Piped or Invidious).
+ * Falls back to YouTube oEmbed for basic metadata if no provider is configured.
  * 
  * Environment Variables:
- * - COBALT_API_URL: (optional) URL of a cobalt API instance for downloads
- * - COBALT_API_KEY: (optional) API key for the cobalt instance
+ * - VIDEO_PROVIDER_TYPE: 'piped' | 'invidious' (optional)
+ * - VIDEO_PROVIDER_URL: URL of the provider instance (optional)
+ * - VIDEO_PROVIDER_API_KEY: API key for the provider (optional)
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -23,7 +24,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!url || typeof url !== 'string') {
     return res.status(400).json({
       success: false,
-      error: 'Missing or invalid URL.',
+      error: { code: 'INVALID_URL', message: 'Missing or invalid URL.' },
+    });
+  }
+
+  // Validate URL format
+  if (!isSafeUrl(url)) {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'INVALID_URL', message: 'Invalid or unsafe URL.' },
     });
   }
 
@@ -31,7 +40,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!videoId) {
     return res.status(400).json({
       success: false,
-      error: 'Invalid YouTube URL. Please enter a valid YouTube video or Shorts link.',
+      error: { code: 'INVALID_URL', message: 'Invalid YouTube URL. Please enter a valid YouTube video or Shorts link.' },
     });
   }
 
@@ -39,21 +48,57 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   console.log('[analyze] DIAGNOSTIC: Analyzing video', { videoId, isShort });
 
+  // Try to use configured provider first
+  const provider = getProvider();
+  
+  if (provider) {
+    console.log('[analyze] DIAGNOSTIC: Using provider:', provider.name);
+    
+    try {
+      const result = await provider.analyze(url);
+      
+      if (result.success && result.video && result.formats) {
+        console.log('[analyze] DIAGNOSTIC: Provider analysis successful');
+        
+        return res.status(200).json({
+          success: true,
+          video: result.video,
+          formats: result.formats,
+          downloadAvailable: true,
+        });
+      }
+      
+      if (result.error) {
+        console.log('[analyze] DIAGNOSTIC: Provider error:', result.error);
+        
+        // Map provider errors to our error codes
+        return res.status(400).json({
+          success: false,
+          error: result.error,
+        });
+      }
+    } catch (error) {
+      console.error('[analyze] DIAGNOSTIC: Provider failed:', error);
+      // Fall through to oEmbed fallback
+    }
+  }
+
+  // Fallback to YouTube oEmbed (public API, no auth needed)
+  console.log('[analyze] DIAGNOSTIC: Falling back to YouTube oEmbed');
+  
   try {
-    // Fetch metadata from YouTube oEmbed (public API, no auth needed)
     const metadata = await fetchYouTubeMetadata(videoId);
 
     if (!metadata) {
       console.log('[analyze] DIAGNOSTIC: oEmbed returned no data for', videoId);
       return res.status(404).json({
         success: false,
-        error: 'Video not found or unavailable.',
+        error: { code: 'VIDEO_UNAVAILABLE', message: 'Video not found or unavailable.' },
       });
     }
 
     // Check if download provider is configured
-    const providerUrl = process.env.VIDEO_PROVIDER_URL;
-    const downloadAvailable = !!providerUrl;
+    const downloadAvailable = isProviderConfigured();
 
     console.log('[analyze] DIAGNOSTIC: Download available:', downloadAvailable);
 
@@ -76,7 +121,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.log('[analyze] DIAGNOSTIC: Error:', message);
     return res.status(500).json({
       success: false,
-      error: 'Failed to analyze video. Please try again.',
+      error: { code: 'ANALYZE_FAILED', message: 'Failed to analyze video. Please try again.' },
     });
   }
 }

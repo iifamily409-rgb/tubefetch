@@ -130,7 +130,7 @@ describe('requestDownload', () => {
         headers: new Headers({ 'content-type': 'application/json' }),
         json: () => Promise.resolve({
           success: false,
-          error: { code: 'PROVIDER_NOT_CONFIGURED', message: 'Set COBALT_API_URL.' },
+          error: { code: 'PROVIDER_NOT_CONFIGURED', message: 'Set VIDEO_PROVIDER_URL.' },
         }),
       });
 
@@ -225,7 +225,7 @@ describe('requestDownload', () => {
           success: false,
           error: {
             code: 'PROVIDER_NOT_CONFIGURED',
-            message: 'Download provider is not configured. Set COBALT_API_URL environment variable.',
+            message: 'Download provider is not configured. Set VIDEO_PROVIDER_URL environment variable.',
           },
         }),
       });
@@ -427,7 +427,7 @@ describe('checkDownloadAvailability', () => {
       headers: new Headers({ 'content-type': 'application/json' }),
       json: () => Promise.resolve({
         success: false,
-        error: { code: 'PROVIDER_NOT_CONFIGURED', message: 'Set COBALT_API_URL.' },
+        error: { code: 'PROVIDER_NOT_CONFIGURED', message: 'Set VIDEO_PROVIDER_URL.' },
       }),
     });
 
