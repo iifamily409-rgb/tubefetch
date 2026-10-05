@@ -18,7 +18,7 @@ const errorConfig = {
     color: 'red',
   },
   'unsupported': {
-    icon: '❌',
+    icon: '⚙️',
     color: 'orange',
   },
   'processing': {

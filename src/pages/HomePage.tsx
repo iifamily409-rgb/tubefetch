@@ -12,6 +12,7 @@ import { HowItWorks } from '../components/HowItWorks';
 import { FeatureCard } from '../components/FeatureCard';
 import { FAQ } from '../components/FAQ';
 import { analyzeVideo, prepareDownload } from '../services/videoService';
+import { requestDownload, triggerBrowserDownload } from '../services/downloadService';
 import { isValidYouTubeUrl } from '../lib/validation';
 import { sleep } from '../lib/utils';
 import type { VideoMetadata, VideoFormat, DownloadState, AppStatus } from '../types/video';
@@ -71,11 +72,17 @@ export default function HomePage() {
     }
   }, []);
 
+  // Store the downloaded blob for the final download trigger
+  const downloadedBlobRef = useRef<Blob | null>(null);
+  const downloadedFileNameRef = useRef<string>('');
+
   const handleFormatSelect = useCallback(async (format: VideoFormat) => {
     setSelectedFormat(format);
     setStatus('downloading');
     setDownloadProgress(0);
     cancelRef.current = false;
+    downloadedBlobRef.current = null;
+    downloadedFileNameRef.current = '';
 
     setDownloadState({
       progress: 0,
@@ -85,9 +92,18 @@ export default function HomePage() {
       fileSize: format.fileSize || 'Unknown',
     });
 
-    try {
-      if (!video) throw new Error('No video selected');
+    if (!video) {
+      setStatus('error');
+      setError({
+        title: 'Download Failed',
+        message: 'No video selected. Please analyze a video first.',
+        type: 'download',
+      });
+      return;
+    }
 
+    try {
+      // Prepare download info (for display purposes)
       const downloadInfo = await prepareDownload(video.id, format.formatId);
 
       setDownloadState({
@@ -98,25 +114,86 @@ export default function HomePage() {
         fileSize: downloadInfo.fileSize,
       });
 
-      // Simulate download progress
-      for (let i = 0; i <= 100; i += Math.random() * 15 + 5) {
+      // Start simulated progress while the API request is in flight
+      let progressInterval: ReturnType<typeof setInterval> | null = null;
+      let currentProgress = 0;
+
+      progressInterval = setInterval(() => {
         if (cancelRef.current) {
-          setStatus('result');
+          if (progressInterval) clearInterval(progressInterval);
           return;
         }
-        const progress = Math.min(Math.round(i), 100);
-        setDownloadProgress(progress);
-        await sleep(200 + Math.random() * 300);
+        // Simulate progress up to 90% while waiting for the API
+        if (currentProgress < 90) {
+          currentProgress += Math.random() * 8 + 2;
+          currentProgress = Math.min(currentProgress, 90);
+          setDownloadProgress(Math.round(currentProgress));
+        }
+      }, 300);
+
+      // Call the real download API
+      const result = await requestDownload({
+        videoId: video.id,
+        formatId: format.formatId,
+        quality: format.quality,
+        format: format.format,
+      });
+
+      // Stop the progress simulation
+      if (progressInterval) clearInterval(progressInterval);
+
+      if (cancelRef.current) {
+        setStatus('result');
+        return;
       }
 
-      setDownloadProgress(100);
-      await sleep(500);
-      setStatus('complete');
-    } catch {
+      if (result.success && result.blob && result.fileName) {
+        // Complete the progress
+        setDownloadProgress(100);
+
+        // Store the blob and filename for the final download trigger
+        downloadedBlobRef.current = result.blob;
+        downloadedFileNameRef.current = result.fileName;
+
+        // Update download state with actual file info
+        setDownloadState({
+          progress: 100,
+          fileName: result.fileName,
+          quality: format.quality,
+          format: format.format,
+          fileSize: result.fileSize ? `${Math.round(result.fileSize / 1024 / 1024 * 10) / 10} MB` : format.fileSize || 'Unknown',
+        });
+
+        await sleep(500);
+        setStatus('complete');
+      } else {
+        // Download failed - show the real error
+        setStatus('error');
+        const errorCode = result.error?.code || 'DOWNLOAD_FAILED';
+        const errorMessage = result.error?.message || 'The video provider did not return a valid downloadable media resource.';
+
+        // Map error codes to UI error types
+        let errorType: 'invalid-url' | 'unavailable' | 'unsupported' | 'processing' | 'download' | 'network' = 'download';
+        if (errorCode === 'NETWORK_ERROR' || errorCode === 'TIMEOUT') {
+          errorType = 'network';
+        } else if (errorCode === 'PROVIDER_NOT_CONFIGURED') {
+          errorType = 'unsupported';
+        } else if (errorCode === 'VIDEO_NOT_FOUND') {
+          errorType = 'unavailable';
+        }
+
+        setError({
+          title: 'Download Failed',
+          message: errorMessage,
+          type: errorType,
+        });
+      }
+    } catch (err) {
       setStatus('error');
+      const message = err instanceof Error ? err.message : 'An unexpected error occurred during download.';
       setError({
         title: 'Download Failed',
-        message: 'Failed to prepare the download. Please try a different quality.',
+        message,
         type: 'download',
       });
     }
@@ -128,17 +205,11 @@ export default function HomePage() {
   }, []);
 
   const handleDownloadFile = useCallback(() => {
-    // In a real app, this would trigger the actual file download
-    if (downloadState?.fileName) {
-      const blob = new Blob(['Demo file content - TubeFetch'], { type: 'application/octet-stream' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = downloadState.fileName;
-      a.click();
-      URL.revokeObjectURL(url);
+    // Trigger the actual browser download with the real media blob
+    if (downloadedBlobRef.current && downloadedFileNameRef.current) {
+      triggerBrowserDownload(downloadedBlobRef.current, downloadedFileNameRef.current);
     }
-  }, [downloadState]);
+  }, []);
 
   const handleRetry = useCallback(() => {
     if (lastUrl) {

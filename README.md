@@ -113,7 +113,27 @@ cp .env.example .env
 ```env
 VITE_APP_NAME=TubeFetch
 VITE_APP_URL=http://localhost:5173
+
+# REQUIRED for actual video downloads:
+VIDEO_PROVIDER_URL=
+VIDEO_PROVIDER_API_KEY=
 ```
+
+### Download Provider Configuration
+
+The download pipeline requires a video provider API to be configured. The provider must:
+
+1. Accept `POST` requests with `{ videoId, formatId, quality?, format? }`
+2. Return either:
+   - A direct media stream with proper `Content-Type` (video/mp4, audio/mpeg, etc.)
+   - A JSON response containing a `url` field pointing to the downloadable media
+
+Compatible providers include:
+- RapidAPI YouTube download APIs
+- Self-hosted yt-dlp API servers (e.g., `yt-dlp-web` or custom wrappers)
+- Any custom API that returns downloadable media
+
+**Without a configured provider, the UI will display a clear error explaining what's needed.**
 
 ## Development
 
@@ -183,6 +203,32 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.
+
+## Architecture
+
+### Download Pipeline
+
+```
+Browser (React SPA)
+    ↓ POST /api/download
+Vercel Serverless Function (api/download.ts)
+    ↓ POST to VIDEO_PROVIDER_URL
+Video Provider API (external)
+    ↓ Returns media URL or direct stream
+Vercel Serverless Function
+    ↓ Streams media to browser
+Browser receives actual media blob
+    ↓ Creates Object URL
+File saved to disk
+```
+
+### Key Design Decisions
+
+1. **No fake downloads**: The frontend validates every response. If the provider doesn't return actual media bytes, the user sees a clear error.
+2. **Serverless-compatible**: No local filesystem, no background workers. Everything runs in Vercel serverless functions.
+3. **Provider-agnostic**: Works with any API that returns downloadable media.
+4. **Proper error propagation**: JSON errors from the API are surfaced to the user with actionable messages.
+5. **Content validation**: The download service checks Content-Type, Content-Length, and minimum file size before accepting a response as valid media.
 
 ## Disclaimer
 
