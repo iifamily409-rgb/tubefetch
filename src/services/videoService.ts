@@ -8,14 +8,15 @@ import { sleep } from '../lib/utils';
  * Handles video analysis and download preparation.
  * 
  * Analysis flow:
- * 1. Try calling /api/analyze (uses YouTube oEmbed for real metadata)
- * 2. If API is not available, fall back to local mock data
+ * 1. Try calling /api/analyze (uses RapidAPI for real metadata)
+ * 2. If API is not available, fall back to YouTube oEmbed
+ * 3. If oEmbed fails, fall back to local mock data
  * 
  * Download flow:
  * 1. prepareDownload() returns display info
  * 2. The actual download is handled by downloadService.ts calling /api/download
  * 
- * The /api/download endpoint uses cobalt API (requires COBALT_API_URL env var).
+ * The /api/download endpoint uses RapidAPI (requires RAPIDAPI_KEY env var).
  */
 
 // Mock video database for fallback when API is not available

@@ -20,7 +20,7 @@ export function DownloadProgress({ state, progress, downloadState, onCancel, onD
               <Download className="w-5 h-5 text-purple-400 animate-pulse" />
             </div>
             <div>
-              <p className="text-white font-medium">Preparing download...</p>
+              <p className="text-white font-medium">Fetching video info...</p>
               {downloadState && (
                 <p className="text-gray-400 text-sm">{downloadState.quality} • {downloadState.format}</p>
               )}
@@ -44,7 +44,7 @@ export function DownloadProgress({ state, progress, downloadState, onCancel, onD
                 <FileDown className="w-5 h-5 text-blue-400 animate-bounce" />
               </div>
               <div>
-                <p className="text-white font-medium">Downloading...</p>
+                <p className="text-white font-medium">Converting video (in queue)...</p>
                 {downloadState && (
                   <p className="text-gray-400 text-sm">{downloadState.quality} • {downloadState.format}</p>
                 )}
@@ -81,13 +81,13 @@ export function DownloadProgress({ state, progress, downloadState, onCancel, onD
   if (state === 'complete') {
     return (
       <div className="w-full max-w-3xl mx-auto mt-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-        <div className="bg-gray-800/60 backdrop-blur-xl rounded-2xl border border-green-500/20 p-6 shadow-lg shadow-green-500/5">
+        <div className="bg-gray-800/60 backdrop-blur-xl rounded-2xl border border-green-500/30 p-6 shadow-lg shadow-green-500/10">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
               <CheckCircle className="w-5 h-5 text-green-400" />
             </div>
             <div>
-              <p className="text-white font-medium">Download Ready</p>
+              <p className="text-white font-medium text-lg">Ready!</p>
               {downloadState && (
                 <p className="text-gray-400 text-sm">
                   {downloadState.quality} • {downloadState.format} • {downloadState.fileSize}
@@ -104,10 +104,10 @@ export function DownloadProgress({ state, progress, downloadState, onCancel, onD
 
           <button
             onClick={onDownload}
-            className="w-full flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white font-medium rounded-xl transition-all"
+            className="w-full flex items-center justify-center gap-2 py-4 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-400 hover:to-emerald-400 text-white font-semibold rounded-xl transition-all shadow-lg shadow-green-500/20 hover:shadow-green-500/30 hover:scale-[1.02]"
           >
-            <Download className="w-4 h-4" />
-            Download File
+            <Download className="w-5 h-5" />
+            Download MP4
           </button>
         </div>
       </div>
