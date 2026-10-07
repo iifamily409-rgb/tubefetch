@@ -87,16 +87,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.log('[download] DIAGNOSTIC: Creating download request');
 
     // Build request body based on format type
-    const isAudio = formatId.startsWith('audio');
+    const isAudio = formatId.includes('audio') || formatId.includes('mp3') || formatId.includes('m4a');
     const requestBody: any = { id: videoId };
     
     if (isAudio) {
       // For audio formats
       requestBody.type = 'audio';
+      // Don't send quality for audio
     } else {
-      // For video formats - extract quality from formatId (e.g., "1080p" -> "1080")
+      // For video formats - extract quality digits from formatId
       requestBody.type = 'merged';
-      requestBody.quality = formatId.replace('p', '');
+      const qualityMatch = (formatId || '').match(/\d+/);
+      requestBody.quality = qualityMatch ? qualityMatch[0] : '1080';
     }
     
     console.log('[download] DIAGNOSTIC: Request body:', requestBody);
