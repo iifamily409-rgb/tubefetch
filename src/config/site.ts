@@ -5,7 +5,7 @@ export const siteConfig = {
   appName: import.meta.env.VITE_APP_NAME || 'TubeFetch',
   version: '1.0.0',
   author: 'TubeFetch Team',
-  github: 'https://github.com/tubefetch/tubefetch',
+  github: 'https://github.com/iifamily409-rgb/tubefetch',
   links: {
     howItWorks: '/how-it-works',
     supportedFormats: '/supported-formats',
