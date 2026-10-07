@@ -122,15 +122,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.log('[analyze] DIAGNOSTIC: RapidAPI response received');
 
     // Extract video metadata from RapidAPI response
+    // RapidAPI returns data inside videoDetails object
+    const videoDetails = data.videoDetails || {};
+    
+    // Get highest quality thumbnail
+    const thumbnails = videoDetails.thumbnails || [];
+    const bestThumbnail = thumbnails.length > 0 
+      ? thumbnails[thumbnails.length - 1]?.url 
+      : `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
+
     const video = {
       id: videoId,
-      title: data.title || 'Untitled',
-      thumbnail: data.thumbnail?.url || data.thumbnail || `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
-      channel: data.author || data.channel || 'Unknown',
-      duration: formatDuration(data.duration || data.lengthSeconds || 0),
-      uploadDate: data.uploadDate || data.publishDate || new Date().toISOString().split('T')[0],
+      title: videoDetails.title || 'Untitled',
+      thumbnail: bestThumbnail,
+      channel: videoDetails.author || 'Unknown',
+      duration: formatDuration(videoDetails.duration || 0),
+      uploadDate: videoDetails.uploadDate || videoDetails.publishDate || undefined, // Don't show today's date if not available
       isShort,
-      viewCount: data.viewCount ? formatViewCount(data.viewCount) : undefined,
+      viewCount: videoDetails.viewCount ? formatViewCount(videoDetails.viewCount) : undefined,
     };
 
     return res.status(200).json({
