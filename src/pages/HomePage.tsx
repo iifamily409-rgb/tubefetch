@@ -23,6 +23,7 @@ export default function HomePage() {
   const [video, setVideo] = useState<VideoMetadata | null>(null);
   const [formats, setFormats] = useState<VideoFormat[]>([]);
   const [selectedFormat, setSelectedFormat] = useState<VideoFormat | null>(null);
+  const [loadingFormatId, setLoadingFormatId] = useState<string | null>(null);
   const [downloadState, setDownloadState] = useState<DownloadState | null>(null);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [error, setError] = useState<{ title: string; message: string; type: 'invalid-url' | 'unavailable' | 'unsupported' | 'processing' | 'download' | 'network' } | null>(null);
@@ -78,6 +79,7 @@ export default function HomePage() {
 
   const handleFormatSelect = useCallback(async (format: VideoFormat) => {
     setSelectedFormat(format);
+    setLoadingFormatId(format.formatId);
     setStatus('downloading');
     setDownloadProgress(0);
     cancelRef.current = false;
@@ -166,9 +168,11 @@ export default function HomePage() {
         });
 
         await sleep(500);
+        setLoadingFormatId(null);
         setStatus('complete');
       } else {
         // Download failed - show the real error
+        setLoadingFormatId(null);
         setStatus('error');
         const errorCode = result.error?.code || 'DOWNLOAD_FAILED';
         const errorMessage = result.error?.message || 'The video provider did not return a valid downloadable media resource.';
@@ -190,6 +194,7 @@ export default function HomePage() {
         });
       }
     } catch (err) {
+      setLoadingFormatId(null);
       setStatus('error');
       const message = err instanceof Error ? err.message : 'An unexpected error occurred during download.';
       setError({
@@ -202,6 +207,7 @@ export default function HomePage() {
 
   const handleCancel = useCallback(() => {
     cancelRef.current = true;
+    setLoadingFormatId(null);
     setStatus('result');
   }, []);
 
@@ -276,6 +282,7 @@ export default function HomePage() {
                     formats={formats}
                     onSelect={handleFormatSelect}
                     selectedFormatId={selectedFormat?.formatId}
+                    loadingFormatId={loadingFormatId || undefined}
                   />
                 )}
                 {(status === 'downloading' || status === 'complete') && (

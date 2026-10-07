@@ -79,7 +79,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           description: null,
           isShort,
         },
-        formats: getFormats(isShort),
+        formats: getFormats(isShort, undefined),
         downloadAvailable: false,
       });
     } catch (error) {
@@ -155,7 +155,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({
       success: true,
       video,
-      formats: getFormats(isShort),
+      formats: getFormats(isShort, data),
       downloadAvailable: true,
     });
 
@@ -184,19 +184,86 @@ async function fetchYouTubeMetadata(videoId: string): Promise<{ title: string; a
   }
 }
 
-function getFormats(isShort: boolean) {
+function getFormats(isShort: boolean, data?: any) {
+  // Extract file sizes from API response if available
   const videoFormats = [
-    { formatId: '1080p', quality: '1080p', resolution: isShort ? '1080x1920' : '1920x1080', format: 'MP4', fileSize: '—', hasAudio: true, hasVideo: true, type: 'video' as const },
-    { formatId: '720p', quality: '720p', resolution: isShort ? '720x1280' : '1280x720', format: 'MP4', fileSize: '—', hasAudio: true, hasVideo: true, type: 'video' as const },
-    { formatId: '480p', quality: '480p', resolution: isShort ? '480x854' : '854x480', format: 'MP4', fileSize: '—', hasAudio: true, hasVideo: true, type: 'video' as const },
-    { formatId: '360p', quality: '360p', resolution: isShort ? '360x640' : '640x360', format: 'MP4', fileSize: '—', hasAudio: true, hasVideo: true, type: 'video' as const },
+    { 
+      formatId: '1080p', 
+      quality: '1080p', 
+      resolution: isShort ? '1080x1920' : '1920x1080', 
+      format: 'MP4', 
+      fileSize: getFileSize(data?.video, '1080'),
+      hasAudio: true, 
+      hasVideo: true, 
+      type: 'video' as const 
+    },
+    { 
+      formatId: '720p', 
+      quality: '720p', 
+      resolution: isShort ? '720x1280' : '1280x720', 
+      format: 'MP4', 
+      fileSize: getFileSize(data?.video, '720'),
+      hasAudio: true, 
+      hasVideo: true, 
+      type: 'video' as const 
+    },
+    { 
+      formatId: '480p', 
+      quality: '480p', 
+      resolution: isShort ? '480x854' : '854x480', 
+      format: 'MP4', 
+      fileSize: getFileSize(data?.video, '480'),
+      hasAudio: true, 
+      hasVideo: true, 
+      type: 'video' as const 
+    },
+    { 
+      formatId: '360p', 
+      quality: '360p', 
+      resolution: isShort ? '360x640' : '640x360', 
+      format: 'MP4', 
+      fileSize: getFileSize(data?.video, '360'),
+      hasAudio: true, 
+      hasVideo: true, 
+      type: 'video' as const 
+    },
   ];
 
   const audioFormats = [
-    { formatId: 'audio-mp3', quality: '128kbps', format: 'MP3', fileSize: '—', hasAudio: true, hasVideo: false, type: 'audio' as const },
+    { 
+      formatId: 'audio-mp3', 
+      quality: '128kbps', 
+      format: 'MP3', 
+      fileSize: getFileSize(data?.audio, 'mp3'),
+      hasAudio: true, 
+      hasVideo: false, 
+      type: 'audio' as const 
+    },
   ];
 
   return [...videoFormats, ...audioFormats];
+}
+
+// Helper function to extract file size from API response
+function getFileSize(formats: any[] | undefined, quality: string): string {
+  if (!formats || !Array.isArray(formats)) return '—';
+  
+  const format = formats.find(f => 
+    f.quality === quality || 
+    f.format === quality ||
+    f.qualityLabel === quality ||
+    (quality === 'mp3' && f.format?.toLowerCase().includes('mp3'))
+  );
+  
+  if (format?.contentLength) {
+    const bytes = parseInt(format.contentLength, 10);
+    if (!isNaN(bytes) && bytes > 0) {
+      const mb = bytes / (1024 * 1024);
+      return `${mb.toFixed(1)} MB`;
+    }
+  }
+  
+  return '—';
 }
 
 function extractVideoId(url: string): string | null {

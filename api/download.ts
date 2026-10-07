@@ -86,6 +86,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Step 1: Create download request
     console.log('[download] DIAGNOSTIC: Creating download request');
 
+    // Build request body based on format type
+    const isAudio = formatId.startsWith('audio');
+    const requestBody: any = { id: videoId };
+    
+    if (isAudio) {
+      // For audio formats
+      requestBody.type = 'audio';
+    } else {
+      // For video formats - extract quality from formatId (e.g., "1080p" -> "1080")
+      requestBody.type = 'merged';
+      requestBody.quality = formatId.replace('p', '');
+    }
+    
+    console.log('[download] DIAGNOSTIC: Request body:', requestBody);
+
     const requestResponse = await fetch(`https://${rapidApiHost}/api/v2/request`, {
       method: 'POST',
       headers: {
@@ -93,7 +108,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         'x-rapidapi-host': rapidApiHost,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ id: videoId }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!requestResponse.ok) {
