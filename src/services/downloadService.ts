@@ -225,21 +225,40 @@ export function triggerBrowserDownload(blob: Blob, fileName: string): void {
 }
 
 /**
- * Trigger a browser file download from a URL.
+ * Trigger a browser file download from a URL by fetching as Blob first.
+ * This ensures the filename is respected even for cross-origin URLs.
  */
-export function triggerBrowserDownloadFromUrl(downloadUrl: string, fileName: string): void {
-  const a = document.createElement('a');
-  a.href = downloadUrl;
-  a.download = fileName;
-  a.target = '_blank';
-  a.rel = 'noopener noreferrer';
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-
-  setTimeout(() => {
-    document.body.removeChild(a);
-  }, 100);
+export async function triggerBrowserDownloadFromUrl(downloadUrl: string, fileName: string): Promise<void> {
+  try {
+    // Fetch the video as a Blob
+    const response = await fetch(downloadUrl);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    
+    // Create download link with blob URL
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = fileName;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    
+    // Cleanup
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    }, 100);
+  } catch (error) {
+    console.error('Blob download failed, falling back to direct link:', error);
+    
+    // Fallback: open in new tab (user can right-click > Save As)
+    window.open(downloadUrl, '_blank');
+  }
 }
 
 /**

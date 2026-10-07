@@ -205,12 +205,22 @@ export default function HomePage() {
     setStatus('result');
   }, []);
 
-  const handleDownloadFile = useCallback(() => {
-    // Trigger the actual browser download with the download URL
-    if (downloadedUrlRef.current && downloadedFileNameRef.current) {
-      triggerBrowserDownloadFromUrl(downloadedUrlRef.current, downloadedFileNameRef.current);
+  const handleDownloadFile = useCallback(async () => {
+    // Trigger the actual browser download with the video title as filename
+    if (downloadedUrlRef.current && video) {
+      // Sanitize video title for filename (remove invalid characters)
+      const cleanTitle = (video.title || 'video')
+        .replace(/[\\/:*?"<>|]/g, '') // Remove invalid filename characters
+        .replace(/\s+/g, ' ') // Normalize whitespace
+        .trim()
+        .substring(0, 100); // Limit length
+      
+      const extension = selectedFormat?.format.toLowerCase() || 'mp4';
+      const fileName = `${cleanTitle}.${extension}`;
+      
+      await triggerBrowserDownloadFromUrl(downloadedUrlRef.current, fileName);
     }
-  }, []);
+  }, [video, selectedFormat]);
 
   const handleRetry = useCallback(() => {
     if (lastUrl) {
