@@ -1,6 +1,5 @@
-import { Calendar, Clock, User, Eye, ExternalLink, Zap } from 'lucide-react';
+import { Clock, User, Eye, ExternalLink, Zap } from 'lucide-react';
 import type { VideoMetadata } from '../types/video';
-import { formatDate } from '../lib/utils';
 
 interface VideoPreviewProps {
   video: VideoMetadata;
@@ -22,10 +21,12 @@ export function VideoPreview({ video }: VideoPreviewProps) {
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
 
-          {/* Duration badge */}
-          <div className="absolute bottom-3 right-3 px-2 py-1 bg-black/80 backdrop-blur-sm rounded-md text-white text-xs font-mono">
-            {video.duration}
-          </div>
+          {/* Duration badge - only show if duration exists */}
+          {video.duration && (
+            <div className="absolute bottom-3 right-3 px-2 py-1 bg-black/80 backdrop-blur-sm rounded-md text-white text-xs font-mono">
+              {video.duration}
+            </div>
+          )}
 
           {/* Shorts badge */}
           {video.isShort && (
@@ -42,19 +43,29 @@ export function VideoPreview({ video }: VideoPreviewProps) {
             {video.title}
           </h3>
 
+          {/* Description - only show if available */}
+          {video.description && (
+            <p className="text-sm text-gray-400 mb-4 line-clamp-3">
+              {video.description}
+            </p>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Channel - always show */}
             <div className="flex items-center gap-2 text-sm text-gray-400">
               <User className="w-4 h-4 text-purple-400" />
               <span>{video.channel}</span>
             </div>
-            <div className="flex items-center gap-2 text-sm text-gray-400">
-              <Clock className="w-4 h-4 text-blue-400" />
-              <span>{video.duration}</span>
-            </div>
-            <div className="flex items-center gap-2 text-sm text-gray-400">
-              <Calendar className="w-4 h-4 text-green-400" />
-              <span>{formatDate(video.uploadDate)}</span>
-            </div>
+
+            {/* Duration - only show if available */}
+            {video.duration && (
+              <div className="flex items-center gap-2 text-sm text-gray-400">
+                <Clock className="w-4 h-4 text-blue-400" />
+                <span>{video.duration}</span>
+              </div>
+            )}
+
+            {/* View count - only show if available */}
             {video.viewCount && (
               <div className="flex items-center gap-2 text-sm text-gray-400">
                 <Eye className="w-4 h-4 text-yellow-400" />

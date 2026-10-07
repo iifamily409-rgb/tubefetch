@@ -3,11 +3,11 @@ export interface VideoMetadata {
   title: string;
   thumbnail: string;
   channel: string;
-  duration: string;
-  uploadDate: string;
+  duration: string | null;
+  uploadDate: string | null;
   isShort: boolean;
   viewCount?: string;
-  description?: string;
+  description?: string | null;
 }
 
 export interface VideoFormat {

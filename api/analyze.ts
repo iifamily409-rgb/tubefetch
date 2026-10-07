@@ -74,8 +74,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           title: metadata.title,
           thumbnail: `https://img.youtube.com/vi/${videoId}/${isShort ? 'hq' : 'max'}default.jpg`,
           channel: metadata.author_name,
-          duration: '—',
-          uploadDate: new Date().toISOString().split('T')[0],
+          duration: null,
+          uploadDate: null,
+          description: null,
           isShort,
         },
         formats: getFormats(isShort),
@@ -131,13 +132,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ? thumbnails[thumbnails.length - 1]?.url 
       : `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
 
+    // Format duration only if it exists and is > 0
+    const duration = videoDetails.duration && videoDetails.duration > 0 
+      ? formatDuration(videoDetails.duration) 
+      : null;
+
+    // Get description if available
+    const description = videoDetails.description || videoDetails.shortDescription || null;
+
     const video = {
       id: videoId,
       title: videoDetails.title || 'Untitled',
       thumbnail: bestThumbnail,
       channel: videoDetails.author || 'Unknown',
-      duration: formatDuration(videoDetails.duration || 0),
-      uploadDate: videoDetails.uploadDate || videoDetails.publishDate || undefined, // Don't show today's date if not available
+      duration: duration, // null if not available
+      uploadDate: null, // API doesn't provide this, so always null
+      description: description, // null if not available
       isShort,
       viewCount: videoDetails.viewCount ? formatViewCount(videoDetails.viewCount) : undefined,
     };
