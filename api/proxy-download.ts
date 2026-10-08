@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { isSafeUrl } from './lib/security';
 
 /**
  * GET /api/proxy-download
@@ -70,6 +71,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({
       success: false,
       error: { code: 'INVALID_URL', message: 'Invalid URL format.' },
+    });
+  }
+
+  // SSRF Protection: Validate URL is safe (not internal/private network)
+  if (!isSafeUrl(decodedUrl)) {
+    console.log('[proxy-download] DIAGNOSTIC: SSRF blocked - unsafe URL:', decodedUrl);
+    return res.status(400).json({
+      success: false,
+      error: { code: 'UNSAFE_URL', message: 'The provided URL is not allowed for security reasons.' },
     });
   }
 
