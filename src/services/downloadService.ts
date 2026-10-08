@@ -225,25 +225,29 @@ export function triggerBrowserDownload(blob: Blob, fileName: string): void {
 }
 
 /**
- * Trigger a browser file download from a URL using the proxy endpoint.
- * This bypasses CORS restrictions and ensures the correct filename.
+ * Trigger browser file download directly from the provider's CDN URL.
+ * Bypasses Vercel serverless function timeouts and 4.5MB payload limits.
  */
 export async function triggerBrowserDownloadFromUrl(downloadUrl: string, fileName: string): Promise<void> {
-  // Use the proxy endpoint to bypass CORS and ensure proper filename
-  const proxyUrl = `/api/proxy-download?url=${encodeURIComponent(downloadUrl)}&filename=${encodeURIComponent(fileName)}`;
-  
-  // Create download link
-  const a = document.createElement('a');
-  a.href = proxyUrl;
-  a.download = fileName;
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  
-  // Cleanup
-  setTimeout(() => {
-    document.body.removeChild(a);
-  }, 100);
+  try {
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = fileName;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+
+    setTimeout(() => {
+      document.body.removeChild(a);
+    }, 1000);
+  } catch (err) {
+    console.error('[downloadService] Direct download trigger failed, falling back to proxy:', err);
+    // Fallback to proxy redirect if direct trigger fails
+    const proxyUrl = `/api/proxy-download?url=${encodeURIComponent(downloadUrl)}&filename=${encodeURIComponent(fileName)}`;
+    window.location.href = proxyUrl;
+  }
 }
 
 /**

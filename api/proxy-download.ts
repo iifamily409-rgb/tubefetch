@@ -89,12 +89,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     .replace(/\s+/g, ' ') // Normalize whitespace
     .trim()
     .substring(0, 255); // Limit length
-
+  
+  // Create ASCII-safe fallback filename for Content-Disposition header
+  // This prevents ERR_INVALID_CHAR errors with non-ASCII characters (Hindi, Chinese, etc.)
+  const asciiFilename = cleanFilename
+    .replace(/[^\x20-\x7E]/g, '_') // Replace non-ASCII with underscore
+    .replace(/\s+/g, '_') // Replace spaces with underscore
+    .substring(0, 255);
+  
+  // RFC 5987 encoding for UTF-8 filename (supports Hindi, Chinese, etc.)
+  const utf8Filename = encodeURIComponent(cleanFilename).replace(/['()]/g, escape).replace(/\*/g, '%2A');
+  
   console.log('[proxy-download] DIAGNOSTIC: Proxying download', {
     url: decodedUrl,
     filename: cleanFilename,
+    asciiFilename,
   });
-
   try {
     // Fetch the media from the external URL
     const mediaResponse = await fetch(decodedUrl, {
@@ -154,7 +164,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Set response headers
     res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${cleanFilename}"`);
+    // Use RFC 5987 encoding for UTF-8 filename support (Hindi, Chinese, etc.)
+    // Fallback to ASCII-safe filename for older browsers
+    res.setHeader('Content-Disposition', `attachment; filename="${asciiFilename}"; filename*=UTF-8''${utf8Filename}`);
     if (contentLength) {
       res.setHeader('Content-Length', contentLength);
     }
