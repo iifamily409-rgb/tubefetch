@@ -47,9 +47,10 @@ export function truncate(str: string, maxLength: number): string {
  * Extracts a clean, recognizable English filename from a video title.
  * Always prefixes the filename with "TubeFetch_".
  * If mixed (e.g., Hindi + English), keeps the English words.
- * If no English text is found, falls back to TubeFetch_<videoId>.<ext>.
+ * If no English text is found, transliterates the entire title to Roman English.
+ * Only falls back to videoId if transliteration fails or produces empty result.
  */
-export function extractEnglishFileName(title: string | undefined | null, videoId: string, ext: string = 'mp4'): string {
+export async function extractEnglishFileName(title: string | undefined | null, videoId: string, ext: string = 'mp4'): Promise<string> {
   const cleanExt = ext.replace(/^\./, '').toLowerCase() || 'mp4';
   const prefix = 'TubeFetch_';
 
@@ -83,6 +84,30 @@ export function extractEnglishFileName(title: string | undefined | null, videoId
     return `${prefix}${trimmedTitle}.${cleanExt}`;
   }
 
-  // Fallback when title contains no recognizable English text
+  // No English text found - transliterate the entire title to Roman English
+  try {
+    // Dynamic import for transliteration library
+    const { transliterate } = await import('transliteration');
+    const transliterated = transliterate(sanitized, {
+      trim: true,
+    });
+
+    // Clean up the transliterated result
+    const cleanedTransliterated = transliterated
+      .replace(/[^\w\s\-_.]/g, ' ') // Remove any remaining non-safe chars
+      .replace(/\s+/g, ' ') // Normalize whitespace
+      .trim()
+      .substring(0, 60) // Truncate to safe length
+      .replace(/[.\-_]+$/, ''); // Remove trailing symbols
+
+    // If transliteration produced valid result, use it
+    if (cleanedTransliterated.length >= 3) {
+      return `${prefix}${cleanedTransliterated}.${cleanExt}`;
+    }
+  } catch (error) {
+    console.warn('[extractEnglishFileName] Transliteration failed:', error);
+  }
+
+  // Final fallback to videoId if transliteration failed or produced empty result
   return `${prefix}${videoId}.${cleanExt}`;
 }

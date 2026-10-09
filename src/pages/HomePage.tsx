@@ -216,7 +216,7 @@ export default function HomePage() {
     if (downloadedUrlRef.current && video) {
       // Use extractEnglishFileName to generate clean, consistent filename
       const extension = selectedFormat?.format.toLowerCase() || 'mp4';
-      const fileName = extractEnglishFileName(video.title, video.id, extension);
+      const fileName = await extractEnglishFileName(video.title, video.id, extension);
       
       await triggerBrowserDownloadFromUrl(downloadedUrlRef.current, fileName);
     }
