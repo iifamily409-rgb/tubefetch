@@ -42,3 +42,47 @@ export function truncate(str: string, maxLength: number): string {
   if (str.length <= maxLength) return str;
   return str.substring(0, maxLength) + '...';
 }
+
+/**
+ * Extracts a clean, recognizable English filename from a video title.
+ * Always prefixes the filename with "TubeFetch_".
+ * If mixed (e.g., Hindi + English), keeps the English words.
+ * If no English text is found, falls back to TubeFetch_<videoId>.<ext>.
+ */
+export function extractEnglishFileName(title: string | undefined | null, videoId: string, ext: string = 'mp4'): string {
+  const cleanExt = ext.replace(/^\./, '').toLowerCase() || 'mp4';
+  const prefix = 'TubeFetch_';
+
+  if (!title) {
+    return `${prefix}${videoId}.${cleanExt}`;
+  }
+
+  // Remove filesystem-unsafe characters
+  const sanitized = title.replace(/[\\/:*?"<>|]/g, ' ');
+
+  // Extract English words, numbers, and common punctuation
+  const englishMatches = sanitized.match(/[a-zA-Z0-9\s\-_.]+/g);
+  let englishTitle = '';
+
+  if (englishMatches) {
+    englishTitle = englishMatches
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  // Check if there are meaningful English letters (at least 3 letters)
+  const hasValidEnglish = /[a-zA-Z]{3,}/.test(englishTitle);
+
+  if (hasValidEnglish) {
+    // Truncate to a safe length (max 60 chars) and clean trailing symbols
+    const trimmedTitle = englishTitle
+      .substring(0, 60)
+      .trim()
+      .replace(/[.\-_]+$/, '');
+    return `${prefix}${trimmedTitle}.${cleanExt}`;
+  }
+
+  // Fallback when title contains no recognizable English text
+  return `${prefix}${videoId}.${cleanExt}`;
+}

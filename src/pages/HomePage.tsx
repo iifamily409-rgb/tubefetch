@@ -14,7 +14,7 @@ import { FAQ } from '../components/FAQ';
 import { analyzeVideo, prepareDownload } from '../services/videoService';
 import { requestDownload, triggerBrowserDownloadFromUrl } from '../services/downloadService';
 import { isValidYouTubeUrl } from '../lib/validation';
-import { sleep } from '../lib/utils';
+import { sleep, extractEnglishFileName } from '../lib/utils';
 import type { VideoMetadata, VideoFormat, DownloadState, AppStatus } from '../types/video';
 import { Zap, Shield, Globe, Clock, Download, Sparkles } from 'lucide-react';
 
@@ -214,15 +214,9 @@ export default function HomePage() {
   const handleDownloadFile = useCallback(async () => {
     // Trigger the actual browser download with the video title as filename
     if (downloadedUrlRef.current && video) {
-      // Sanitize video title for filename (remove invalid characters)
-      const cleanTitle = (video.title || 'video')
-        .replace(/[\\/:*?"<>|]/g, '') // Remove invalid filename characters
-        .replace(/\s+/g, ' ') // Normalize whitespace
-        .trim()
-        .substring(0, 100); // Limit length
-      
+      // Use extractEnglishFileName to generate clean, consistent filename
       const extension = selectedFormat?.format.toLowerCase() || 'mp4';
-      const fileName = `${cleanTitle}.${extension}`;
+      const fileName = extractEnglishFileName(video.title, video.id, extension);
       
       await triggerBrowserDownloadFromUrl(downloadedUrlRef.current, fileName);
     }
