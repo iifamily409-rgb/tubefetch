@@ -225,56 +225,22 @@ export function triggerBrowserDownload(blob: Blob, fileName: string): void {
 }
 
 /**
- * Triggers a browser file download with the specified custom filename.
- * Fetches the media as a Blob to create a same-origin URL (blob:...),
- * which forces Chrome, Edge, and Firefox to strictly respect the `download` attribute.
+ * Triggers a direct browser file download from the provider's CDN URL.
+ * Bypasses Vercel serverless proxy limits and completely prevents "Site wasn't available" errors.
  */
 export async function triggerBrowserDownloadFromUrl(downloadUrl: string, fileName: string): Promise<void> {
-  try {
-    // 1. Fetch as Blob to make URL same-origin (blob:https://...)
-    // This forces Chrome to honor our custom TubeFetch_ filename!
-    const response = await fetch(downloadUrl);
-    if (!response.ok) {
-      throw new Error(`Fetch failed with status ${response.status}`);
-    }
+  const a = document.createElement('a');
+  a.href = downloadUrl;
+  a.download = fileName;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
 
-    const blob = await response.blob();
-    const blobUrl = URL.createObjectURL(blob);
-
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = fileName;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
-    }, 2000);
-    return;
-  } catch (err) {
-    console.warn('[downloadService] Blob fetch failed (likely CDN CORS), falling back to proxy:', err);
-  }
-
-  // 2. Fallback: If direct fetch is blocked by CORS, route through proxy with Content-Disposition
-  try {
-    const proxyUrl = `/api/proxy-download?url=${encodeURIComponent(downloadUrl)}&filename=${encodeURIComponent(fileName)}`;
-    const a = document.createElement('a');
-    a.href = proxyUrl;
-    a.download = fileName;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-
-    setTimeout(() => {
-      document.body.removeChild(a);
-    }, 2000);
-  } catch (fallbackErr) {
-    console.error('[downloadService] Fallback proxy download failed:', fallbackErr);
-    // Last resort: direct link
-    window.open(downloadUrl, '_blank');
-  }
+  setTimeout(() => {
+    document.body.removeChild(a);
+  }, 1000);
 }
 
 /**
