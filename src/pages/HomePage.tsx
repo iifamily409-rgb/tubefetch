@@ -154,14 +154,18 @@ export default function HomePage() {
         // Complete the progress
         setDownloadProgress(100);
 
+        // Generate proper filename with TubeFetch_ prefix and transliteration
+        const extension = format.format.toLowerCase();
+        const properFileName = await extractEnglishFileName(video.title, video.id, extension);
+
         // Store the download URL and filename for the final download trigger
         downloadedUrlRef.current = result.downloadUrl;
-        downloadedFileNameRef.current = result.fileName;
+        downloadedFileNameRef.current = properFileName;
 
         // Update download state with actual file info
         setDownloadState({
           progress: 100,
-          fileName: result.fileName,
+          fileName: properFileName,
           quality: format.quality,
           format: format.format,
           fileSize: result.fileSize ? `${Math.round(result.fileSize / 1024 / 1024 * 10) / 10} MB` : format.fileSize || 'Unknown',
