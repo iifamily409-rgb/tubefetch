@@ -226,15 +226,14 @@ export function triggerBrowserDownload(blob: Blob, fileName: string): void {
 
 /**
  * Triggers a direct browser file download from the provider's CDN URL.
- * Bypasses Vercel serverless proxy limits and completely prevents "Site wasn't available" errors.
+ * Completely bypasses Vercel proxy - zero serverless timeouts, zero "Site wasn't available" errors.
  */
 export async function triggerBrowserDownloadFromUrl(downloadUrl: string, fileName: string): Promise<void> {
+  // Direct CDN download - zero proxy, zero Vercel timeouts
   const a = document.createElement('a');
   a.href = downloadUrl;
-  a.download = fileName;
   a.target = '_blank';
   a.rel = 'noopener noreferrer';
-  a.style.display = 'none';
   document.body.appendChild(a);
   a.click();
 
